@@ -1,0 +1,4902 @@
+*----------------------------------------------------------------------*
+***INCLUDE ZMMIN_LIQ_TRANSP_F01_PE .
+*----------------------------------------------------------------------*
+* Development Id : I1057-16
+* Date :12 de Enero 2023
+* Developer : Deep S Zamindar
+* Documentation route:Documentacion/COPEC/ECC/Proyectos/I1057
+*
+* Description :Monitor para Liquidar Transporte para T77 PERU
+*&
+*---------------------------------------------------------------------*
+*---------------------------------------------------------------------*
+* Date :13 de Junio 2023
+* Developer : Deep S Zamindar (DZ0001)
+* Documentation route:Documentacion/COPEC/ECC/Proyectos/I1057
+*
+* Description :Added new logic for Crear y Anular el Nro de Parte
+*&
+*---------------------------------------------------------------------*
+*---------------------------------------------------------------------*
+* Date :16 de Junio 2023
+* Developer : Deep S Zamindar (DZ0002)
+* Documentation route:Documentacion/COPEC/ECC/Proyectos/I1057
+*
+* Description : No actualizar el Status de Transportista en IC
+*&
+*----------------------------------------------------------------------*
+*---------------------------------------------------------------------*
+* Date :20 de Junio 2023
+* Developer : Deep S Zamindar (DZ0002)
+* Documentation route:Documentacion/COPEC/ECC/Proyectos/I1057
+*
+* Description : 1) Ajuste en la validación de la Transportista
+*&              2) Ajuste para los DTs Tipo PT01 para Centro
+*---------------------------------------------------------------------*
+*---------------------------------------------------------------------*
+* Date :3 de Ago 2023
+* Developer : Deep S Zamindar (DZ0003)
+* Documentation route:Documentacion/COPEC/ECC/Proyectos/I1057
+*
+* Description : 1) Nueva Campo Centro Base en Selec Screen
+*&              2) BAPI for MIRO
+*               3) PT01 and PT02 for Terceros to be joined
+*---------------------------------------------------------------------*
+*---------------------------------------------------------------------*
+* Date :13 de Septiembre 2023
+* Developer : Deep S Zamindar (DZ0004)
+* Documentation route:Documentacion/COPEC/ECC/Proyectos/I1057
+*
+* Description : 1) Removal of DATEN as obligatory for Report Purpose
+*&              2) Added BLACKOUT field in the Report
+*               3) Corrected the Logic for Updating the Z table
+*---------------------------------------------------------------------*
+*---------------------------------------------------------------------*
+* Date :11 de Octubre 2023
+* Developer : Deep S Zamindar (DZ0005)
+* Documentation route:Documentacion/COPEC/ECC/Proyectos/I1057
+*
+* Description : 1) Corrected OWENS validation
+*&              2) Corrected Z table updation
+*               3) Added DTs to PO text
+*               4) Actualizar el Doc de provisión con Su Anulación
+*                   si ya está anulado
+*---------------------------------------------------------------------*
+*---------------------------------------------------------------------*
+* Date :17 de Nov 2023
+* Developer : Deep S Zamindar (DZ0006)
+* Documentation route:Documentacion/COPEC/ECC/Proyectos/I1057
+*
+* Description : 1) Anular todos los Provisiones aparte de la una que
+*                  esta en la Tabla Z y fueron creadas equivocadas
+*---------------------------------------------------------------------*
+*---------------------------------------------------------------------*
+* Date :12 de Dic 2023
+* Developer : Deep S Zamindar (DZ0007)
+* Documentation route:Documentacion/COPEC/ECC/Proyectos/I1057
+*
+* Description : 1) Comentamos la logica de Anular todos los Provisiones
+*                   aparte de la una que esta en la Tabla Z y fueron
+*                   creadas equivocadas
+*---------------------------------------------------------------------*
+*---------------------------------------------------------------------*
+* Date :20 de Dic 2023
+* Developer : Deep S Zamindar (DZ0008)
+* Documentation route:Documentacion/COPEC/ECC/Proyectos/I1057
+*
+* Description : 1) Arreglar logica para Ref de MIRO
+*---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Form  F_FCAT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      <--P_LIT_FCAT  text
+*----------------------------------------------------------------------*
+*&----------------------------------------------------------------------------
+*& Date | Modif. By | Description | Request Nr
+*&----------------------------------------------------------------------------
+*& 30.07.2024| CO029257 | RQ17 - RQ19 - 26 Modificaciones al Monitor T1 | CHG0128432
+*&----------------------------------------------------------------------------
+*&---------------------------------------------------------------------*
+*& Date       | Modif. By | Description                | Request Nr
+*&---------------------------------------------------------------------*
+*& 22.11.2024 | MX007608  | Monitor T1 INC6376225      | DR3K9B4I41
+*&            |           |                            | CHG0146846
+*&---------------------------------------------------------------------*
+*& 01.04.2024 | MX007608  | INC7087853 - Error en      | SB8K901071
+*&            |           | aprobar tarifa             | CHG0158495
+*&---------------------------------------------------------------------*
+*& 30.ABR.2025 | CO027689 | OP_Modificaciones T1       | CHG0160235
+*&             |          | ID : @0001                 | SB8K901619
+*&----------------------------------------------------------------------------*
+*& 16.05.2025  | Luis Vesga | Validacion crear material | CHG0164250
+*& @0002 validar que el transporte tiene tarifa intercompany o tarifa cost model,
+*& si tiene alguna de las dos, debe permitir la creación del número de parte,
+*& si no tiene ninguna, debe salir un error
+*&----------------------------------------------------------------------------*
+
+
+FORM f_fcat  CHANGING fp_fcat TYPE lvc_t_fcat.
+
+
+  IF rb_pliq IS NOT INITIAL
+      OR rb_aprob IS NOT INITIAL.
+
+    CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+      EXPORTING
+        i_structure_name = 'ZMMES_PRELIQUIDAR_T1'
+      CHANGING
+        ct_fieldcat      = fp_fcat.
+
+  ELSEIF rb_liq IS NOT INITIAL OR rb_rep IS NOT INITIAL.
+
+    CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+      EXPORTING
+        i_structure_name = 'ZMMTT_LIQ_TRANSP'
+      CHANGING
+        ct_fieldcat      = fp_fcat.
+
+
+  ENDIF.
+
+ENDFORM.                    " F_FCAT
+*&---------------------------------------------------------------------*
+*&      Form  F_SHOW_ALV
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_FCAT  text
+*      -->P_LWA_LAY  text
+*      -->P_IM_LIQ_TRANSP  text
+*----------------------------------------------------------------------*
+FORM f_show_alv  USING  fp_fcat       TYPE lvc_t_fcat
+                        fp_lay        TYPE lvc_s_layo
+                        fp_liq_transp TYPE ty_t_liqtrans.
+
+  DATA: lit_transp  TYPE ty_t_liqtrans,
+        lit_fcat    TYPE lvc_t_fcat,
+        lwa_variant TYPE disvariant.
+
+  FIELD-SYMBOLS <lfs_fcat> TYPE lvc_s_fcat.
+
+* @0001 - Ajustes RITM16870750 - INI
+  DATA:
+    vl_txtcol TYPE string.
+* @0001 - Ajustes RITM16870750 - FIN
+
+
+  lit_transp[]  = fp_liq_transp[].
+  lit_fcat      = fp_fcat.
+
+  lwa_variant-report = sy-repid.
+
+  SORT lit_fcat BY fieldname.
+
+  LOOP AT lit_fcat ASSIGNING <lfs_fcat>.
+    CLEAR: vl_txtcol.
+    CASE <lfs_fcat>-fieldname.
+      WHEN 'BOX'.
+
+        <lfs_fcat>-no_out    =   'X'.
+        <lfs_fcat>-outputlen =   1.
+
+      WHEN 'TKNUM' OR 'DOC_PROV' OR 'DOC_PROV_ANUL' OR 'MBLNR' OR
+            'EBELN_TER' OR 'SALESORD_ALQ' OR  'FACTURA_ALQ' OR
+            'EBELN_IC'  OR 'MBLNR_IC' OR 'SALESORD_IC' OR
+            'FACTURA_IC'
+            OR 'BELNR_IC'.                                  "++DZ0003
+
+        <lfs_fcat>-hotspot  =   'X'.
+
+* @0001 - Ajustes RITM16870750 - INI
+      WHEN 'CONS_COMB_REAL'.
+        vl_txtcol = 'Grifo'.
+
+      WHEN 'KMVAC'.
+        vl_txtcol = 'Combustible Crédito'.
+
+      WHEN 'KMREAL_ALQ'.
+        vl_txtcol = 'Combustible Efectivo'.
+
+* @0001 - Ajustes RITM16870750 - FIN
+      WHEN OTHERS.
+    ENDCASE.
+
+* @0001 - Ajustes RITM16870750 - INI
+    IF vl_txtcol IS INITIAL.
+      CONTINUE.
+    ELSE.
+      <lfs_fcat>-reptext   = vl_txtcol.
+      <lfs_fcat>-scrtext_s = vl_txtcol.
+      <lfs_fcat>-scrtext_m = vl_txtcol.
+      <lfs_fcat>-scrtext_l = vl_txtcol.
+    ENDIF.
+* @0001 - Ajustes RITM16870750 - FIN
+
+  ENDLOOP.
+
+  "Keeping the Consumption of Combustible Editable only for READ option
+  IF rb_pliq IS NOT INITIAL.
+
+    READ TABLE lit_fcat ASSIGNING <lfs_fcat> WITH KEY
+    fieldname = 'CONS_COMB_REAL' BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      <lfs_fcat>-edit    =   'X'.
+      <lfs_fcat>-outputlen = '20'.
+
+    ENDIF.
+
+    READ TABLE lit_fcat ASSIGNING <lfs_fcat> WITH KEY
+    fieldname = 'KMVAC' BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      <lfs_fcat>-edit    =   'X'.
+      <lfs_fcat>-outputlen = '20'.
+
+    ENDIF.
+
+    READ TABLE lit_fcat ASSIGNING <lfs_fcat> WITH KEY
+    fieldname = 'KMREAL_ALQ' BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      <lfs_fcat>-edit    =   'X'.
+      <lfs_fcat>-outputlen = '20'.
+
+    ENDIF.
+
+  ENDIF.
+  IF rb_liq IS NOT INITIAL.
+
+    READ TABLE lit_fcat ASSIGNING <lfs_fcat> WITH KEY
+    fieldname = 'ICON' BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      <lfs_fcat>-col_pos    = '1'.
+      <lfs_fcat>-outputlen  = '4'.
+
+    ENDIF.
+
+
+  ELSE.
+
+    READ TABLE lit_fcat ASSIGNING <lfs_fcat> WITH KEY
+    fieldname = 'ICON' BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      <lfs_fcat>-no_out    =   'X'.
+
+    ENDIF.
+
+  ENDIF.
+
+  it_fcat       = lit_fcat.
+
+  SORT it_fcat BY col_pos.
+
+  CALL METHOD o_grid->set_table_for_first_display
+    EXPORTING
+      is_variant      = lwa_variant
+      is_layout       = fp_lay
+    CHANGING
+      it_fieldcatalog = it_fcat
+      it_outtab       = it_liq_transp[].
+
+
+ENDFORM.                    " F_SHOW_ALV
+*&---------------------------------------------------------------------*
+*&      Form  F_REG_TABLE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_ROWS  text
+*      -->P_IT_LIQ_TRANSP  text
+*----------------------------------------------------------------------*
+FORM f_reg_table  USING    fp_rows        TYPE lvc_t_row
+                           fp_liq_transp  TYPE ty_t_liqtrans.
+  DATA  lv_count TYPE i.
+  FIELD-SYMBOLS: <lfs_row>       TYPE lvc_s_row,
+                 <lfs_liq_trans> TYPE zmmtt_liq_transp.
+
+  PERFORM f_enq_table.
+*** Begin of change by DZ0004 *************************
+*  LOOP AT fp_rows ASSIGNING <lfs_row>.
+*
+*    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+*                              INDEX <lfs_row>-index.
+*
+*    IF sy-subrc IS INITIAL.
+*  LOOP AT fp_liq_transp ASSIGNING <lfs_liq_trans>. --DZ0005
+*** End of change by DZ0004 *************************
+***  Begin of comment by DZ0005 **********************
+*    MODIFY zmmtt_liq_transp FROM <lfs_liq_trans>.
+*    IF sy-subrc IS INITIAL.
+*
+*      lv_count = lv_count + 1.
+*
+*    ENDIF.
+*
+*    "ENDIF. --DZ0004
+*
+*  ENDLOOP.
+***  End of comment by DZ0005 **********************
+
+***  Begin of change by DZ0005 **********************
+
+  DESCRIBE TABLE fp_liq_transp LINES lv_count.
+  MODIFY zmmtt_liq_transp FROM TABLE fp_liq_transp.
+
+***  End of change by DZ0005 **********************
+  COMMIT WORK AND WAIT.
+
+  PERFORM f_deq_table.
+
+  MESSAGE s017(zmm) WITH TEXT-015 lv_count.
+
+ENDFORM.                    " F_REG_TABLE
+*&---------------------------------------------------------------------*
+*&      Form  F_ENQ_TABLE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_enq_table .
+
+  CALL FUNCTION 'ENQUEUE_EZMMBO_LIQ_TRANS'
+    EXPORTING
+      mode_zmmtt_liq_transp = 'E'
+      mandt                 = sy-mandt
+    EXCEPTIONS
+      foreign_lock          = 1
+      system_failure        = 2
+      OTHERS                = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+
+ENDFORM.                    " F_ENQ_TABLE
+*&---------------------------------------------------------------------*
+*&      Form  F_DEQ_TABLE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_deq_table .
+
+  CALL FUNCTION 'DEQUEUE_EZMMBO_LIQ_TRANS'
+    EXPORTING
+      mode_zmmtt_liq_transp = 'E'
+      mandt                 = sy-mandt.
+
+
+ENDFORM.                    " F_DEQ_TABLE
+*&---------------------------------------------------------------------*
+*&      Form  F_PRELIQ
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_ROWS  text
+*      <--P_IT_LIQ_TRANSP  text
+*----------------------------------------------------------------------*
+FORM f_preliq  USING  fp_rows       TYPE lvc_t_row
+               CHANGING fp_liq_transp TYPE ty_t_liqtrans.
+
+  FIELD-SYMBOLS: <lfs_row>        TYPE lvc_s_row,
+                 <lfs_liq_trans>  TYPE zmmtt_liq_transp,
+                 <lfs_liq_trans2> TYPE zmmtt_liq_transp.
+
+  DATA: vl_texto  TYPE char50,
+        vl_texto2 TYPE  char50,
+        vl_texto3 TYPE  char50.
+
+
+  LOOP AT fp_rows ASSIGNING <lfs_row>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              INDEX <lfs_row>-index.
+
+    IF sy-subrc IS INITIAL.
+
+      <lfs_liq_trans>-stat_tdlnr = '1'.
+
+      "LHERAZO RQ26
+      IF <lfs_liq_trans>-nro_parte IS INITIAL.
+        MESSAGE i002(zmmcm_rq26_1227). "Para preliquidar es obligatorio el número de parte
+        LEAVE LIST-PROCESSING.
+      ELSE.
+
+        IF <lfs_liq_trans>-flota EQ 'P' AND  <lfs_liq_trans>-tarf_cond1 IS INITIAL
+          "Solo aplica la validacion para las sociedades Permitidas
+          AND ( <lfs_liq_trans>-bukrs IN ir_bukrs_tar AND ir_bukrs_tar[] IS NOT INITIAL ). "MX007608 22.11.2024
+          MESSAGE i003(zmmcm_rq26_1227) . "Tarifa del conductor es cero, no se puede preliquidar
+          LEAVE LIST-PROCESSING.
+        ELSE.
+          LOOP AT fp_liq_transp ASSIGNING <lfs_liq_trans2>.
+            IF <lfs_liq_trans2>-nro_parte = <lfs_liq_trans>-nro_parte AND sy-tabix NE <lfs_row>-index.
+              IF <lfs_liq_trans2>-conduc1 NE <lfs_liq_trans>-conduc1 OR
+                 <lfs_liq_trans2>-conduc2 NE <lfs_liq_trans>-conduc2.
+
+                CONCATENATE  TEXT-d16 <lfs_liq_trans2>-nro_parte INTO vl_texto  SEPARATED BY space.
+                CONCATENATE  TEXT-d17 <lfs_liq_trans2>-tknum     INTO vl_texto2 SEPARATED BY space.
+                CONCATENATE  vl_texto2 ','                       INTO vl_texto2.
+                CONCATENATE  <lfs_liq_trans>-tknum TEXT-d18      INTO vl_texto3 SEPARATED BY space.
+
+                MESSAGE  i004(zmmcm_rq26_1227) WITH vl_texto vl_texto2 vl_texto3.
+                LEAVE LIST-PROCESSING.
+
+              ENDIF.
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
+      ENDIF.
+
+
+
+      "FIN LHERAZO RQ26
+
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.                    " F_PRELIQ
+*&---------------------------------------------------------------------*
+*&      Form  F_CONFIRM
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      <--P_LV_RESP  text
+*----------------------------------------------------------------------*
+FORM f_confirm  USING     fp_text TYPE char50
+                CHANGING  fp_resp TYPE char1.
+
+  CLEAR fp_resp.
+
+  CALL FUNCTION 'POPUP_TO_CONFIRM'
+    EXPORTING
+      titlebar              = fp_text
+      text_question         = fp_text
+      text_button_1         = 'Si'(021)
+      text_button_2         = 'No'(022)
+      default_button        = '1'
+      display_cancel_button = 'X'
+    IMPORTING
+      answer                = fp_resp
+    EXCEPTIONS
+      text_not_found        = 1
+      OTHERS                = 2.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+
+ENDFORM.                    " F_CONFIRM
+*&---------------------------------------------------------------------*
+*&      Form  F_APROB
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_ROWS  text
+*      <--P_IT_LIQ_TRANSP  text
+*----------------------------------------------------------------------*
+FORM f_aprob  USING  fp_rows       TYPE lvc_t_row
+                     fp_tipo       TYPE char1 "MX007608 07.04.2025
+              CHANGING fp_liq_transp TYPE ty_t_liqtrans
+                       fp_return TYPE flag. "MX007608 04.04.2025
+
+  FIELD-SYMBOLS: <lfs_row>       TYPE lvc_s_row,
+                 <lfs_liq_trans> TYPE zmmtt_liq_transp.
+
+  DATA  lv_no_tarf_ic TYPE char1.                           "++DZ0003
+
+  LOOP AT fp_rows ASSIGNING <lfs_row>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              INDEX <lfs_row>-index.
+
+    IF sy-subrc IS INITIAL.
+
+      IF <lfs_liq_trans>-tarf_ic IS NOT INITIAL             "++DZ0003
+      OR <lfs_liq_trans>-tarif_costmod IS NOT INITIAL.     "MX007608 01.04.2025
+
+        IF fp_tipo EQ 'A'. "MX007608 07.04.2025
+          <lfs_liq_trans>-stat_tdlnr  = '2'.
+
+          <lfs_liq_trans>-stat_ic     = '1'.
+        ENDIF. "MX007608 07.04.2025
+*** Begin of change by DZ0003 **********
+      ELSE.
+
+        lv_no_tarf_ic = 'X'.
+
+      ENDIF.
+*** End of change by DZ0003 **********
+
+    ENDIF.
+
+  ENDLOOP.
+
+*** Begin of change by DZ0003 **********
+  IF lv_no_tarf_ic IS NOT INITIAL.
+
+    fp_return = abap_true. "MX007608 04.04.2025
+    IF fp_tipo EQ 'A'. "MX007608 07.04.2025
+      MESSAGE i172(zmm).
+      "MX007608 07.04.2025 <INI>
+    ELSE.
+      MESSAGE i183(zmm).
+    ENDIF.
+    "MX007608 07.04.2025 <FIN>
+  ENDIF.
+*** End of change by DZ0003 **********
+
+ENDFORM.                    " F_APROB
+*&---------------------------------------------------------------------*
+*&      Form  F_LIQUIDAR_TERC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_ROWS  text
+*      <--P_IT_LIQ_TRANSP  text
+*----------------------------------------------------------------------*
+FORM f_liquidar_terc  USING fp_rows       TYPE lvc_t_row
+                      CHANGING fp_liq_transp TYPE ty_t_liqtrans
+                                fp_ret        TYPE bapiret2_t.
+
+  DATA: lit_liq_trans TYPE ty_t_liqtrans,
+        lwa_liq_trans TYPE zmmtt_liq_transp.
+
+  FIELD-SYMBOLS: <lfs_row>       TYPE  lvc_s_row,
+                 <lfs_liq_trans> TYPE  zmmtt_liq_transp.
+
+  LOOP AT fp_rows ASSIGNING <lfs_row>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              INDEX <lfs_row>-index.
+
+    IF sy-subrc IS INITIAL.
+
+      MOVE <lfs_liq_trans> TO lwa_liq_trans.
+      APPEND lwa_liq_trans TO lit_liq_trans.
+
+    ENDIF.
+
+  ENDLOOP.
+*** If in the ALV they Disturb the SORT then we SORT again
+*** to keep the original SORT
+  SORT fp_liq_transp BY bukrs tknum shtyp tplst.            "++DZ0003
+*** Step 1 Creacion de PO para Transportista
+  PERFORM f_create_po_terc  USING lit_liq_trans
+                            CHANGING fp_liq_transp
+                                      fp_ret.
+
+*** Step 2 Creacion de Hoja de Entrada para Transportista.
+  PERFORM f_create_he_terc  USING lit_liq_trans
+                            CHANGING fp_liq_transp
+                                      fp_ret.
+
+***  Step 3 Anulacion de DOc de Provision
+  PERFORM f_anul_doc_prov USING lit_liq_trans
+                          CHANGING fp_liq_transp
+                                    fp_ret.
+
+
+ENDFORM.                    " F_LIQUIDAR_TERC
+*&---------------------------------------------------------------------*
+*&      Form  F_LIQUIDAR_IC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_ROWS  text
+*      <--P_IT_LIQ_TRANSP  text
+*----------------------------------------------------------------------*
+FORM f_liquidar_ic  USING fp_rows       TYPE lvc_t_row
+                      CHANGING fp_liq_transp TYPE ty_t_liqtrans
+                                fp_ret        TYPE bapiret2_t.
+
+  DATA: lit_liq_trans TYPE ty_t_liqtrans,
+        lwa_liq_trans TYPE zmmtt_liq_transp.
+
+  FIELD-SYMBOLS: <lfs_row>       TYPE  lvc_s_row,
+                 <lfs_liq_trans> TYPE  zmmtt_liq_transp.
+
+  LOOP AT fp_rows ASSIGNING <lfs_row>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              INDEX <lfs_row>-index.
+
+    IF sy-subrc IS INITIAL.
+
+      MOVE <lfs_liq_trans> TO lwa_liq_trans.
+      APPEND lwa_liq_trans TO lit_liq_trans.
+
+    ENDIF.
+
+  ENDLOOP.
+*** If in the ALV they Disturb the SORT then we SORT again
+*** to keep the original SORT
+  SORT fp_liq_transp BY bukrs tknum shtyp tplst.            "++DZ0003
+*** Step 1 Creacion de PO para Transportista
+  PERFORM f_create_po_ic  USING lit_liq_trans
+                            CHANGING fp_liq_transp
+                                      fp_ret.
+
+*** Step 2 Creation of the Corresponding Mat doc
+  PERFORM f_create_matdoc_ic  USING lit_liq_trans
+                              CHANGING fp_liq_transp
+                                        fp_ret.
+
+*** Step 3 Creation of the Corresponding Sales Document
+  PERFORM f_create_salesdoc_ic  USING lit_liq_trans
+                                CHANGING fp_liq_transp
+                                        fp_ret.
+
+*** Step 4 Creation of the Corresponding Sales Document
+  PERFORM f_create_invoice_ic  USING lit_liq_trans
+                                CHANGING fp_liq_transp
+                                        fp_ret.
+*** Begin of change by DZ0003 **************************
+*** Step 4 Creation of the Corresponding Inv Verification
+  PERFORM f_create_verfact_ic  USING lit_liq_trans
+                                CHANGING fp_liq_transp
+                                        fp_ret.
+*** End of change by DZ0003 **************************
+
+ENDFORM.                    " F_LIQUIDAR_IC
+
+
+* "MX007608 07.07.2023 ADD <INI>
+*&---------------------------------------------------------------------*
+*&      Form  F_LIQUIDAR_IC_OW
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_ROWS  text
+*      <--P_IT_LIQ_TRANSP  text
+*----------------------------------------------------------------------*
+FORM f_liquidar_ic_ow    USING fp_rows       TYPE lvc_t_row
+                      CHANGING fp_liq_transp TYPE ty_t_liqtrans
+                               fp_ret        TYPE bapiret2_t.
+
+  DATA: lit_liq_trans   TYPE ty_t_liqtrans,
+        lit_liq_trans_k TYPE ty_t_liqtrans,
+        lit_liq_trans_f TYPE ty_t_liqtrans,
+        lwa_vttp        TYPE ty_vttp,
+        lwa_liq_trans   TYPE zmmtt_liq_transp,
+        lwa_lfs_const_k TYPE ztconstantes,
+        lwa_lfs_const_f TYPE ztconstantes,
+        lv_bukrs        TYPE bukrs,
+        lv_shtyp        TYPE shtyp.
+
+  FIELD-SYMBOLS: <lfs_row>       TYPE  lvc_s_row,
+                 <lfs_liq_trans> TYPE  zmmtt_liq_transp,
+                 <lfs_const>     TYPE ztconstantes,
+                 <lfs_poic>      TYPE  ty_poic.
+
+  CLEAR: lwa_lfs_const_k, lwa_lfs_const_f.
+
+  lv_bukrs  = p_bukrs.
+
+  READ TABLE it_ztconst ASSIGNING <lfs_const>
+     WITH KEY bukrs = lv_bukrs
+              modulo = 'MM'
+              programm = 'ZMMRE_LIQ_TRANSP_PE'
+              fieldname = 'MTART'
+              grpname = 'VERP' BINARY SEARCH.
+
+  IF sy-subrc IS INITIAL.
+    lwa_lfs_const_k = <lfs_const>.
+  ENDIF.
+
+  READ TABLE it_ztconst ASSIGNING <lfs_const>
+     WITH KEY bukrs = lv_bukrs
+              modulo = 'MM'
+              programm = 'ZMMRE_LIQ_TRANSP_PE'
+              fieldname = 'MTART'
+              grpname = 'BLGA' BINARY SEARCH.
+
+  IF sy-subrc IS INITIAL.
+    lwa_lfs_const_f = <lfs_const>.
+  ENDIF.
+
+  LOOP AT fp_rows ASSIGNING <lfs_row>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              INDEX <lfs_row>-index.
+
+    IF sy-subrc IS INITIAL.
+
+      MOVE <lfs_liq_trans> TO lwa_liq_trans.
+      APPEND lwa_liq_trans TO lit_liq_trans.
+
+      CLEAR: lwa_vttp.
+      READ TABLE it_vttp INTO lwa_vttp
+      WITH KEY tknum = <lfs_liq_trans>-tknum BINARY SEARCH.
+
+      IF sy-subrc IS INITIAL.
+
+        IF lwa_vttp-mtart EQ lwa_lfs_const_k-grpname.
+          APPEND lwa_liq_trans TO lit_liq_trans_k.
+        ELSEIF lwa_vttp-mtart EQ lwa_lfs_const_f-grpname.
+          APPEND lwa_liq_trans TO lit_liq_trans_f.
+        ENDIF.
+
+      ENDIF.
+
+    ENDIF.
+
+  ENDLOOP.
+
+  IF lit_liq_trans_f[] IS NOT INITIAL.
+
+    CLEAR lv_shtyp.
+    lv_shtyp = lwa_lfs_const_f-line_low+0(4).
+    READ TABLE it_poic ASSIGNING <lfs_poic>
+    WITH KEY  bukrs = lv_bukrs
+              shtyp = lv_shtyp
+              tipo  = 'T1'
+              BINARY SEARCH.
+
+    IF sy-subrc NE 0.
+
+      SELECT bukrs
+          shtyp
+          tipo
+          bsart
+          lifnr
+          ekorg
+          ekgrp
+          knttp
+          retpo
+          matnr
+          menge
+          meins
+          FROM zmmtt_trans_poic
+          APPENDING TABLE it_poic
+          WHERE bukrs EQ lv_bukrs
+          AND   shtyp EQ lv_shtyp
+          AND   tipo  EQ 'T1'.
+
+      IF sy-subrc IS INITIAL.
+
+        SORT it_poic BY bukrs shtyp tipo.
+
+      ENDIF.
+
+    ENDIF.
+
+    SORT fp_liq_transp BY bukrs tknum shtyp tplst.          "++DZ0003
+*** Step 1 Creacion de PO para Transportista
+    PERFORM f_create_po_ic_ow  USING lit_liq_trans_f
+                                     lwa_lfs_const_f-grpname+0(4)
+                                     lv_shtyp
+                               CHANGING fp_liq_transp
+                                        fp_ret.
+  ENDIF.
+
+  IF lit_liq_trans_k[] IS NOT INITIAL.
+    CLEAR lv_shtyp.
+    lv_shtyp = lwa_lfs_const_k-line_low+0(4).
+    SORT fp_liq_transp BY bukrs tknum shtyp tplst.          "++DZ0003
+*** Step 1 Creacion de PO para Transportista
+    PERFORM f_create_po_ic_ow  USING lit_liq_trans_k
+                                     lwa_lfs_const_k-grpname+0(4)
+                                     lv_shtyp
+                               CHANGING fp_liq_transp
+                                        fp_ret.
+  ENDIF.
+  SORT fp_liq_transp BY bukrs tknum shtyp tplst.            "++DZ0003
+*** Step 2 Creation of the Corresponding Mat doc
+  PERFORM f_create_matdoc_ic  USING lit_liq_trans
+                              CHANGING fp_liq_transp
+                                        fp_ret.
+
+*** Step 3 Creation of the Corresponding Sales Document
+  PERFORM f_create_salesdoc_ic  USING lit_liq_trans
+                                CHANGING fp_liq_transp
+                                        fp_ret.
+
+*** Step 4 Creation of the Corresponding Sales Document
+  PERFORM f_create_invoice_ic  USING lit_liq_trans
+                                CHANGING fp_liq_transp
+                                        fp_ret.
+*** Begin of change by DZ0003 **************************
+*** Step 4 Creation of the Corresponding Inv Verification
+  PERFORM f_create_verfact_ic  USING lit_liq_trans
+                                CHANGING fp_liq_transp
+                                        fp_ret.
+*** End of change by DZ0003 **************************
+
+ENDFORM.                    " F_LIQUIDAR_IC_OW
+
+* "MX007608 07.07.2023 ADD <FIN>
+
+*&---------------------------------------------------------------------*
+*&      Form  F_ANUL_DOC_PROV
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_LIQ_TRANS  text
+*      <--P_FP_LIQ_TRANSP  text
+*----------------------------------------------------------------------*
+FORM f_anul_doc_prov  USING     fp_liq_trans_sel  TYPE ty_t_liqtrans
+                      CHANGING  fp_liq_transp     TYPE ty_t_liqtrans
+                                fp_ret            TYPE bapiret2_t.
+
+  TYPES: BEGIN OF lty_bkpf,
+           bukrs TYPE bukrs,
+           belnr TYPE belnr_d,
+           gjahr TYPE gjahr,
+           stblg TYPE stblg,                                "++DZ0005
+           stjah TYPE stjah,                                "++DZ0005
+           awtyp TYPE awtyp,
+           awkey TYPE awkey,
+         END     OF  lty_bkpf,
+*** Begin of change by DZ0006 **********
+         BEGIN OF lty_tknum_xblnr,
+           bukrs TYPE bukrs,                                "++DZ0009
+           gjahr TYPE gjahr,                                "++DZ0009
+           tknum TYPE xblnr1,
+         END   OF lty_tknum_xblnr.
+*** End of change by DZ0006 ************
+  DATA: lit_liq_trans TYPE ty_t_liqtrans,
+        lit_bkpf      TYPE STANDARD TABLE OF lty_bkpf,
+        lwa_rev       TYPE bapiacrev,
+        lit_ret       TYPE bapiret2_t,
+        lv_obj_type   TYPE awtyp,
+        lv_obj_key    TYPE awkey,
+        lv_obj_sys    TYPE awsys,
+        lwa_ret       TYPE bapiret2.
+
+  DATA:	lit_liq   TYPE ty_t_liqtrans,                       "++DZ0005
+        lwa_liq   TYPE zmmtt_liq_transp,                    "++DZ0005
+
+        lit_tknum TYPE STANDARD TABLE OF lty_tknum_xblnr,   "++DZ0006
+        lwa_tknum TYPE lty_tknum_xblnr.                     "++DZ0006
+
+  FIELD-SYMBOLS: <lfs_liq_trans>  TYPE zmmtt_liq_transp,
+                 <lfs_liq_trans1> TYPE zmmtt_liq_transp,
+                 <lfs_bkpf>       TYPE lty_bkpf.
+
+  lit_liq_trans[] = fp_liq_transp[].
+
+  DELETE: lit_liq_trans WHERE doc_prov_anul IS NOT INITIAL,
+
+          lit_liq_trans WHERE ebeln_ter IS INITIAL,
+
+          lit_liq_trans WHERE mblnr_ter IS INITIAL.
+
+  IF lit_liq_trans[] IS NOT INITIAL.
+
+    SORT lit_liq_trans BY bukrs tknum shtyp tplst.
+**** Begin of change by DZ0009 **************************
+**** Activating the change and adding more fields
+***  Begin of comment by DZ0007 **********************
+**** Begin of change by DZ0006 **********
+*
+    LOOP AT lit_liq_trans ASSIGNING <lfs_liq_trans1>.
+
+      lwa_tknum-bukrs = <lfs_liq_trans1>-bukrs_prov.        "++DZ0009
+      lwa_tknum-gjahr = <lfs_liq_trans1>-ejer_prov.         "++DZ0009
+      lwa_tknum-tknum = <lfs_liq_trans1>-tknum.
+      APPEND lwa_tknum TO lit_tknum.
+
+    ENDLOOP.
+*
+    IF lit_tknum[] IS NOT INITIAL.
+*
+**** End of change by DZ0006 ************
+***  End of comment by DZ0007 **********************
+**** End of change by DZ0009 **************************
+      SELECT  bukrs
+              belnr
+              gjahr
+              stblg                                         "++DZ0005
+              stjah                                         "++DZ0005
+              awtyp
+              awkey
+              FROM bkpf
+              INTO TABLE lit_bkpf
+*** Begin of change by DZ0009 ************************
+              "FOR ALL ENTRIES IN lit_tknum "--DZ0007
+              "WHERE xblnr = lit_tknum-tknum."--DZ0007
+*          FOR ALL ENTRIES IN lit_liq_trans
+*          WHERE bukrs = lit_liq_trans-bukrs_prov
+*          AND   belnr = lit_liq_trans-doc_prov
+*          AND   gjahr = lit_liq_trans-ejer_prov.
+
+            FOR ALL ENTRIES IN lit_tknum
+            WHERE bukrs = lit_tknum-bukrs
+            AND   gjahr = lit_tknum-gjahr
+            AND   xblnr = lit_tknum-tknum.
+*** End of change by DZ0009 ************************
+
+      IF sy-subrc IS INITIAL.
+
+        SORT lit_bkpf BY bukrs belnr gjahr.
+
+        LOOP AT fp_liq_transp ASSIGNING <lfs_liq_trans1>.
+
+          CLEAR:  lwa_rev, lv_obj_type, lv_obj_key, lv_obj_sys.
+          REFRESH lit_ret.
+
+          READ TABLE lit_liq_trans ASSIGNING <lfs_liq_trans>
+          WITH KEY  bukrs = <lfs_liq_trans1>-bukrs
+                    tknum = <lfs_liq_trans1>-tknum
+                    shtyp = <lfs_liq_trans1>-shtyp
+                    tplst = <lfs_liq_trans1>-tplst
+                    BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+
+            READ TABLE lit_bkpf ASSIGNING <lfs_bkpf>
+            WITH KEY  bukrs = <lfs_liq_trans1>-bukrs_prov
+                      belnr = <lfs_liq_trans1>-doc_prov
+                      gjahr = <lfs_liq_trans1>-ejer_prov
+                      BINARY SEARCH.
+
+            IF sy-subrc IS INITIAL.
+
+              IF <lfs_bkpf>-stblg IS INITIAL.
+
+                lwa_rev-obj_type    = <lfs_bkpf>-awtyp.
+                lwa_rev-obj_key     = <lfs_bkpf>-awkey.
+                lwa_rev-obj_key_r   = <lfs_bkpf>-awkey.
+                lwa_rev-reason_rev  = '03'.
+                lwa_rev-pstng_date  = sy-datum.
+
+                CALL FUNCTION 'BAPI_ACC_DOCUMENT_REV_POST'
+                  EXPORTING
+                    reversal = lwa_rev
+                    bus_act  = 'RFBU'
+                  IMPORTING
+                    obj_type = lv_obj_type
+                    obj_key  = lv_obj_key
+                    obj_sys  = lv_obj_sys
+                  TABLES
+                    return   = lit_ret.
+
+                APPEND LINES OF lit_ret TO fp_ret.
+
+                READ TABLE lit_ret TRANSPORTING NO FIELDS
+                                    WITH KEY type = 'E'.
+
+                IF sy-subrc IS INITIAL.
+
+                  CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+                  <lfs_liq_trans1>-icon = '@0A@'.
+
+                ELSE.
+
+                  IF lv_obj_key IS NOT INITIAL.
+
+                    <lfs_liq_trans1>-doc_prov_anul  = lv_obj_key+0(10).
+                    <lfs_liq_trans1>-ejer_prov_anul = lv_obj_key+14(4).
+                    <lfs_liq_trans1>-imp_prov_anul  =
+                                      <lfs_liq_trans1>-imp_prov.
+
+                    <lfs_liq_trans1>-icon = '@08@'.
+
+                    lwa_liq = <lfs_liq_trans1>.             "++DZ0005
+                    APPEND lwa_liq TO lit_liq.              "++DZ0005
+
+                    <lfs_bkpf>-stblg  = lv_obj_key+0(10).   "++DZ0006
+                    <lfs_bkpf>-stjah  = lv_obj_key+14(4).   "++DZ0006
+
+                    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+                      EXPORTING
+                        wait = 'X'.
+                    WAIT UP TO v_seg SECONDS.
+                  ELSE.
+
+                    <lfs_liq_trans1>-icon = '@0A@'.
+
+                    lwa_liq = <lfs_liq_trans1>.             "++DZ0005
+                    APPEND lwa_liq TO lit_liq.              "++DZ0005
+
+                  ENDIF.
+
+                ENDIF.
+***  Begin of change by DZ0005 **********************
+              ELSE.
+
+                <lfs_liq_trans1>-doc_prov_anul  = <lfs_bkpf>-stblg.
+                <lfs_liq_trans1>-ejer_prov_anul = <lfs_bkpf>-stjah.
+                <lfs_liq_trans1>-imp_prov_anul  = <lfs_liq_trans1>-imp_prov.
+
+                lwa_liq = <lfs_liq_trans1>.                 "++DZ0005
+                APPEND lwa_liq TO lit_liq.                  "++DZ0005
+
+              ENDIF.
+***  End of change by DZ0005 **********************
+
+            ENDIF.
+
+          ENDIF.
+
+        ENDLOOP.
+
+**** Begin of change by DZ0009 **********************************
+**** Activating the change for Cancellation of Multiple provisons
+***  Begin of change by DZ0007 **********************
+***  Begin of change by DZ0006 **********************
+*** Anular todos los otros provisiones si fueron creadas varias
+        IF lit_bkpf[] IS NOT INITIAL.
+
+          DELETE lit_bkpf WHERE stblg IS NOT INITIAL.
+
+          LOOP AT lit_bkpf ASSIGNING <lfs_bkpf>.
+
+            CLEAR:  lwa_rev,lv_obj_type,lv_obj_sys.
+            REFRESH lit_ret.
+
+            lwa_rev-obj_type    = <lfs_bkpf>-awtyp.
+            lwa_rev-obj_key     = <lfs_bkpf>-awkey.
+            lwa_rev-obj_key_r   = <lfs_bkpf>-awkey.
+            lwa_rev-reason_rev  = '03'.
+            lwa_rev-pstng_date  = sy-datum.
+
+            CALL FUNCTION 'BAPI_ACC_DOCUMENT_REV_POST'
+              EXPORTING
+                reversal = lwa_rev
+                bus_act  = 'RFBU'
+              IMPORTING
+                obj_type = lv_obj_type
+                obj_key  = lv_obj_key
+                obj_sys  = lv_obj_sys
+              TABLES
+                return   = lit_ret.
+
+            READ TABLE lit_ret TRANSPORTING NO FIELDS
+                               WITH KEY type = 'E'.
+
+            IF sy-subrc IS INITIAL.
+
+              APPEND LINES OF lit_ret TO fp_ret.
+              CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+            ELSE.
+
+              CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+                EXPORTING
+                  wait = 'X'.
+
+            ENDIF.
+
+          ENDLOOP.
+
+        ENDIF.
+***  End of change by DZ0006 **********************
+***  End of change by DZ0007 **********************
+
+**** End of change by DZ0009 **********************************
+**** Activating the change for Cancellation of Multiple provisons
+      ENDIF.
+
+      "ENDIF."++DZ0006 "--DZ0007
+
+    ENDIF.                                                  "++DZ0009
+
+  ENDIF.
+***  Begin of change by DZ0005 **********************
+  IF lit_liq[] IS NOT INITIAL.
+
+    MODIFY zmmtt_liq_transp FROM TABLE lit_liq.
+    COMMIT WORK.
+
+  ENDIF.
+***  End of change by DZ0005 **********************
+ENDFORM.                    " F_ANUL_DOC_PROV
+*&---------------------------------------------------------------------*
+*&      Form  F_SHOW_LOG
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_RET  text
+*----------------------------------------------------------------------*
+FORM f_show_log  USING  fp_ret  TYPE bapiret2_t.
+
+  TYPES: BEGIN OF lty_error,
+           msgid  LIKE sy-msgid,
+           msgty  LIKE sy-msgty,
+           msgno  LIKE sy-msgno,
+           msgv1  LIKE sy-msgv1,
+           msgv2  LIKE sy-msgv2,
+           msgv3  LIKE sy-msgv3,
+           msgv4  LIKE sy-msgv4,
+           lineno TYPE msgzeile,
+         END      OF lty_error.
+
+  DATA: lit_msg TYPE STANDARD TABLE OF lty_error,
+        lwa_msg TYPE lty_error.
+
+  FIELD-SYMBOLS <lfs_ret> TYPE bapiret2.
+
+  LOOP AT fp_ret ASSIGNING <lfs_ret>.
+
+    lwa_msg-msgid = <lfs_ret>-id.
+    lwa_msg-msgty = <lfs_ret>-type.
+    lwa_msg-msgno = <lfs_ret>-number.
+    lwa_msg-msgv1 = <lfs_ret>-message_v1.
+    lwa_msg-msgv2 = <lfs_ret>-message_v2.
+    lwa_msg-msgv3 = <lfs_ret>-message_v3.
+    lwa_msg-msgv4 = <lfs_ret>-message_v4.
+    APPEND lwa_msg TO lit_msg.
+    CLEAR lwa_msg.
+
+  ENDLOOP.
+
+*     Se muestran los mensajes de error acumulados
+  CALL FUNCTION 'C14Z_MESSAGES_SHOW_AS_POPUP'
+    TABLES
+      i_message_tab = lit_msg.
+
+ENDFORM.                    " F_SHOW_LOG
+*&---------------------------------------------------------------------*
+*&      Form  F_CREATE_PO_TERC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_LIQ_TRANS  text
+*      <--P_FP_LIQ_TRANSP  text
+*      <--P_FP_RET  text
+*----------------------------------------------------------------------*
+FORM f_create_po_terc  USING    fp_liq_trans_sel  TYPE ty_t_liqtrans
+                       CHANGING fp_liq_transp     TYPE ty_t_liqtrans
+                                fp_ret            TYPE bapiret2_t.
+
+  TYPES: BEGIN OF lty_tdlnr_werks,
+           bukrs      TYPE  bukrs,
+           tdlnr_ter  TYPE  zmmed_tdlnr_ter,
+           werks      TYPE  zmmed_werks_base,
+           clase      TYPE  shtyp,                          "++DZ0003
+           shtyp      TYPE  shtyp,
+           bukrs_prov TYPE  bukrs,
+           tknum      TYPE  tknum,
+           tplst      TYPE  tplst,
+           daten      TYPE  datend,
+           tarf_tdlnr TYPE  zmmed_tar_tdlnr,
+           kostl      TYPE  kostl,
+         END           OF    lty_tdlnr_werks.
+
+  DATA: lit_tdlnr_werks   TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lit_trans_ter     TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lwa_tdlnr_werks   TYPE lty_tdlnr_werks,
+
+        lv_tarifa         TYPE  zmmed_tar_tdlnr,
+        lv_month          TYPE  fcltx,
+        lv_count          TYPE  i,
+        lv_pckg_no        TYPE  packno,
+        lv_int_serv       TYPE  srv_line_no,
+        lv_ebeln          TYPE  ebeln,
+
+*** PO related Definitions
+        lwa_poheader      TYPE bapimepoheader,
+        lwa_poheaderx     TYPE bapimepoheaderx,
+        lwa_poitem        TYPE bapimepoitem,
+        lwa_poitemx       TYPE bapimepoitemx,
+        lwa_poschedule    TYPE bapimeposchedule,
+        lwa_poschedulex   TYPE bapimeposchedulx,
+        lwa_poaccount     TYPE bapimepoaccount,
+        lwa_poaccountx    TYPE bapimepoaccountx,
+        lwa_ret           TYPE bapiret2,
+
+        lit_poitem        TYPE STANDARD TABLE OF bapimepoitem,
+        lit_poitemx       TYPE STANDARD TABLE OF bapimepoitemx,
+        lit_poschedule    TYPE STANDARD TABLE OF bapimeposchedule,
+        lit_poschedulex   TYPE STANDARD TABLE OF bapimeposchedulx,
+        lit_poaccount     TYPE STANDARD TABLE OF bapimepoaccount,
+        lit_poaccountx    TYPE STANDARD TABLE OF bapimepoaccountx,
+        lwa_poservices    TYPE bapiesllc,
+        lit_poservices    TYPE STANDARD TABLE OF bapiesllc,
+
+        lwa_posrv_acc     TYPE bapiesklc,
+        lit_posrv_acc     TYPE STANDARD TABLE OF bapiesklc,
+
+        lit_ret           TYPE bapiret2_t,
+        lit_ret_tmp       TYPE bapiret2_t,
+
+        lit_liq_trans_sel TYPE ty_t_liqtrans,
+        lv_werks          TYPE werks_d,                     "++DZ0002
+        lit_const         TYPE ty_t_ztconst,                "++DZ0003
+***  Begin of change by DZ0005 **********************
+        lwa_liq           TYPE zmmtt_liq_transp,
+        lit_liq           TYPE ty_t_liqtrans,
+
+        lwa_ebeln         TYPE ty_ebeln_dt,
+        lit_ebeln         TYPE ty_t_ebeln_dt.
+***  End of change by DZ0005 **********************
+
+  FIELD-SYMBOLS: <lfs_row>         TYPE  lvc_s_row,
+                 <lfs_liq_trans>   TYPE  zmmtt_liq_transp,
+                 <lfs_mm_trans>    TYPE  ty_mm_trans,
+                 <lfs_tdlnr_werks> TYPE  lty_tdlnr_werks,
+                 <lfs_trans_ter>   TYPE  lty_tdlnr_werks,
+                 <lfs_cesp>        TYPE  ty_cesp,
+                 <lfs_const>       TYPE  ztconstantes.      "++DZ0003
+
+  lit_liq_trans_sel[] = fp_liq_trans_sel[].
+
+  DELETE lit_liq_trans_sel WHERE ebeln_ter IS NOT INITIAL.
+*** Begin of change by DZ0003 ************************
+  lit_const[] = it_ztconst[].
+  SORT lit_const BY fieldname grpname line_low.
+*** End of change by DZ0003 ************************
+  LOOP AT lit_liq_trans_sel ASSIGNING <lfs_liq_trans>.
+
+*** Begin of change by DZ0002 ************************
+    lv_werks = <lfs_liq_trans>-tplst.
+
+    PERFORM f_get_cbase USING it_r_shtyps
+                              it_transp_cbase
+                              <lfs_liq_trans>-tknum
+                              <lfs_liq_trans>-shtyp
+                              <lfs_liq_trans>-tplst
+                              CHANGING lv_werks.
+*** End of change by DZ0002 ************************
+
+    READ TABLE it_cesp ASSIGNING <lfs_cesp>
+                        WITH KEY  bukrs = <lfs_liq_trans>-bukrs
+                                  tplst = lv_werks
+                                  "<lfs_liq_trans>-tplst --DZ0002
+                                  shtyp = <lfs_liq_trans>-shtyp
+                                  tipo  = 'T1'
+                                  BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      lwa_tdlnr_werks-bukrs       = <lfs_liq_trans>-bukrs.
+      lwa_tdlnr_werks-tdlnr_ter   = <lfs_liq_trans>-tdlnr_ter.
+      lwa_tdlnr_werks-werks       = <lfs_liq_trans>-werks_ter.
+*** Begin of change by DZ0003 ************************
+      READ TABLE lit_const ASSIGNING <lfs_const>
+                    WITH KEY  fieldname = 'SHTYP'
+                              grpname   = 'JUNTOS'
+                              line_low  = <lfs_liq_trans>-shtyp
+                              BINARY SEARCH.
+      IF sy-subrc IS INITIAL.
+        lwa_tdlnr_werks-clase = <lfs_const>-line_high.
+      ELSE.
+        lwa_tdlnr_werks-clase = <lfs_liq_trans>-shtyp.
+      ENDIF.
+*** End of change by DZ0003 ************************
+      lwa_tdlnr_werks-shtyp       = <lfs_liq_trans>-shtyp.
+      lwa_tdlnr_werks-bukrs_prov  = <lfs_liq_trans>-bukrs_prov.
+      lwa_tdlnr_werks-tknum       = <lfs_liq_trans>-tknum.
+      lwa_tdlnr_werks-tplst       = <lfs_liq_trans>-tplst.
+      lwa_tdlnr_werks-daten       = <lfs_liq_trans>-daten.
+      lwa_tdlnr_werks-tarf_tdlnr  = <lfs_liq_trans>-tarf_tdlnr.
+      lwa_tdlnr_werks-kostl       = <lfs_liq_trans>-kostl_ter
+                                    = <lfs_cesp>-kostl_ter.
+      APPEND lwa_tdlnr_werks TO lit_tdlnr_werks.
+
+    ENDIF.
+
+  ENDLOOP.
+
+  CLEAR lwa_tdlnr_werks.
+
+  SORT lit_tdlnr_werks BY bukrs tdlnr_ter werks clase.
+  "shtyp. --DZ0003
+
+  LOOP AT lit_tdlnr_werks ASSIGNING <lfs_tdlnr_werks>.
+
+    lv_tarifa = lv_tarifa + <lfs_tdlnr_werks>-tarf_tdlnr.
+
+    lwa_tdlnr_werks = <lfs_tdlnr_werks>.
+    APPEND lwa_tdlnr_werks TO lit_trans_ter.
+
+    AT END OF clase.
+      "shtyp. --DZ0003
+
+**** Populate Header for PO
+      READ TABLE it_mm_trans ASSIGNING <lfs_mm_trans>
+      WITH KEY  bukrs = lwa_tdlnr_werks-bukrs_prov
+                shtyp = lwa_tdlnr_werks-shtyp
+                tipo  = 'T1'
+                BINARY SEARCH.
+
+      IF sy-subrc IS INITIAL.
+
+        lv_pckg_no              = lv_pckg_no + 1.
+        lv_int_serv             = lv_int_serv + 1.
+
+        lwa_poheader-doc_type   = <lfs_mm_trans>-bsart.
+        lwa_poheader-vendor     = lwa_tdlnr_werks-tdlnr_ter.
+        lwa_poheader-purch_org  = <lfs_mm_trans>-ekorg.
+        lwa_poheader-pur_group  = <lfs_mm_trans>-ekgrp.
+        lwa_poheader-comp_code  = <lfs_mm_trans>-bukrs.
+        lwa_poheader-vper_start = v_date_popup.
+        lwa_poheader-vper_end   = v_date_popup.
+
+        lwa_poheaderx-doc_type    = sy-abcde+23(1).
+        lwa_poheaderx-vendor      = sy-abcde+23(1).
+        lwa_poheaderx-purch_org   = sy-abcde+23(1).
+        lwa_poheaderx-pur_group   = sy-abcde+23(1).
+        lwa_poheaderx-comp_code   = sy-abcde+23(1).
+        lwa_poheaderx-vper_start  = sy-abcde+23(1).
+        lwa_poheaderx-vper_end    = sy-abcde+23(1).
+
+*** Populate Line Item
+        lwa_poitem-po_item        = lv_count = lv_count + 10.
+        lwa_poitemx-po_item       = lwa_poitem-po_item.
+        lwa_poitemx-po_itemx      = 'X'.
+
+        lwa_poitem-po_unit        = <lfs_mm_trans>-meins.
+        lwa_poitemx-po_unit       = sy-abcde+23(1).
+
+        lwa_poitem-quantity       = <lfs_mm_trans>-menge.
+        lwa_poitemx-quantity      = sy-abcde+23(1).
+
+        lwa_poitem-plant          = lwa_tdlnr_werks-werks.
+        lwa_poitemx-plant         = sy-abcde+23(1).
+
+        lwa_poitem-item_cat       = <lfs_mm_trans>-pstyp.
+        lwa_poitemx-item_cat      = 'X'.
+
+        lwa_poitem-acctasscat     = <lfs_mm_trans>-knttp.
+        lwa_poitemx-acctasscat    = 'X'.
+
+        lwa_poitem-net_price      = lv_tarifa.
+        lwa_poitemx-net_price     = 'X'.
+
+        CALL FUNCTION 'ISP_GET_MONTH_NAME'
+          EXPORTING
+            language     = sy-langu
+            month_number = sy-datum+4(2)
+          IMPORTING
+            longtext     = lv_month
+          EXCEPTIONS
+            calendar_id  = 1
+            date_error   = 2
+            not_found    = 3
+            wrong_input  = 4
+            OTHERS       = 5.
+        IF sy-subrc <> 0.
+          MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                  WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+        ENDIF.
+
+        CONCATENATE <lfs_mm_trans>-text_serv lv_month
+        INTO lwa_poitem-short_text SEPARATED BY space.
+
+        lwa_poitemx-short_text    = 'X'.
+
+        lwa_poitem-matl_group     = <lfs_mm_trans>-matkl.
+        lwa_poitemx-matl_group    = 'X'.
+
+        lwa_poitem-preq_name      = <lfs_mm_trans>-kunnr.
+        lwa_poitemx-preq_name     = 'X'.
+
+        lwa_poitem-pckg_no        = lv_pckg_no.
+        lwa_poitemx-pckg_no       = 'X'.
+
+        APPEND lwa_poitem TO lit_poitem.
+        APPEND lwa_poitemx TO lit_poitemx.
+
+        lwa_poschedule-po_item        = lwa_poitem-po_item.
+        lwa_poschedulex-po_item       = lwa_poitem-po_item.
+*       Upgrade EHP8 T-Systems  15.03.2025
+*       Asignar cantidad a Schudele Line y 1 a linea de Schedule
+*        lwa_poschedule-sched_line     = lwa_poitem-po_item.
+*        lwa_poschedulex-sched_line    = lwa_poitem-po_item.
+        lwa_poschedule-sched_line     = 1.
+        lwa_poschedulex-sched_line    = 1.
+        lwa_poschedule-quantity       = lwa_poitem-quantity.
+        lwa_poschedulex-quantity      = 'X'.
+
+        lwa_poschedule-delivery_date  = v_date_popup.
+        lwa_poschedulex-delivery_date = 'X'.
+
+        APPEND lwa_poschedule  TO lit_poschedule.
+        APPEND lwa_poschedulex TO lit_poschedulex.
+
+        lwa_poaccount-po_item     = lwa_poitem-po_item.
+        lwa_poaccountx-po_item    = lwa_poitem-po_item.
+
+        lwa_poaccountx-po_itemx   = 'X'.
+        lwa_poaccount-serial_no     = '01'.
+        lwa_poaccountx-serial_no    = '01'.
+        lwa_poaccountx-serial_nox   = 'X'.
+
+        lwa_poaccount-costcenter  = lwa_tdlnr_werks-kostl.
+        lwa_poaccountx-costcenter  = 'X'.
+
+        APPEND lwa_poaccount TO lit_poaccount.
+        APPEND lwa_poaccountx TO lit_poaccountx.
+
+        IF <lfs_mm_trans> IS ASSIGNED.
+
+          IF <lfs_mm_trans>-asnum IS NOT INITIAL.
+
+            lwa_poservices-pckg_no    = lv_pckg_no.
+            lwa_poservices-line_no    = lv_int_serv.
+            ADD 1 TO lv_pckg_no.
+            lwa_poservices-subpckg_no = lv_pckg_no.
+            lwa_poservices-from_line  = '1'.
+            APPEND lwa_poservices TO lit_poservices.
+
+            lwa_posrv_acc-pckg_no = lwa_poservices-pckg_no.
+            lwa_posrv_acc-line_no = lwa_poservices-line_no.
+            lwa_posrv_acc-serno_line  = '01'.
+            lwa_posrv_acc-percentage  = '100.0'.
+            lwa_posrv_acc-serial_no   = '01'.
+            lwa_posrv_acc-quantity    = <lfs_mm_trans>-menge.
+            APPEND lwa_posrv_acc TO lit_posrv_acc.
+
+            CLEAR:  lwa_poservices, lwa_posrv_acc.
+
+*** Service line
+            lwa_poservices-pckg_no    = lv_pckg_no.
+            lwa_poservices-line_no    = lv_int_serv + 1.
+            lwa_poservices-service    = <lfs_mm_trans>-asnum.
+
+* Convertir entrada con ceros a la izquierda
+            CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+              EXPORTING
+                input  = lwa_poservices-service
+              IMPORTING
+                output = lwa_poservices-service.
+
+            lwa_poservices-quantity   = <lfs_mm_trans>-menge.
+            lwa_poservices-gr_price   = lv_tarifa.
+
+            lwa_poservices-base_uom        = <lfs_mm_trans>-meins.
+
+            APPEND lwa_poservices TO lit_poservices.
+
+            lwa_posrv_acc-pckg_no = lwa_poservices-pckg_no.
+            lwa_posrv_acc-line_no = lwa_poservices-line_no.
+            lwa_posrv_acc-serno_line  = '01'.
+            lwa_posrv_acc-percentage  = '100.0'.
+            lwa_posrv_acc-serial_no   = '01'.
+            lwa_posrv_acc-quantity    = <lfs_mm_trans>-menge.
+            APPEND lwa_posrv_acc TO lit_posrv_acc.
+
+            CLEAR lwa_poservices.
+
+          ENDIF.
+
+        ENDIF.
+
+      ENDIF.
+
+      IF lit_poitem[] IS NOT INITIAL.
+
+        CALL FUNCTION 'BAPI_PO_CREATE1'
+          EXPORTING
+            poheader          = lwa_poheader
+            poheaderx         = lwa_poheaderx
+          IMPORTING
+            exppurchaseorder  = lv_ebeln
+          TABLES
+            return            = lit_ret
+            poitem            = lit_poitem
+            poitemx           = lit_poitemx
+            poschedule        = lit_poschedule
+            poschedulex       = lit_poschedulex
+            poaccount         = lit_poaccount
+            poaccountx        = lit_poaccountx
+            poservices        = lit_poservices
+            posrvaccessvalues = lit_posrv_acc.
+
+      ENDIF.
+
+      IF lv_ebeln IS NOT INITIAL.
+
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          EXPORTING
+            wait = 'X'.
+
+        WAIT UP TO v_seg SECONDS.
+
+        LOOP AT lit_trans_ter ASSIGNING <lfs_trans_ter>.
+
+          READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              WITH KEY  bukrs = <lfs_trans_ter>-bukrs
+                                        tknum = <lfs_trans_ter>-tknum
+                                        shtyp = <lfs_trans_ter>-shtyp
+                                        tplst = <lfs_trans_ter>-tplst
+                                          BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+
+            <lfs_liq_trans>-ebeln_ter   = lv_ebeln.
+            <lfs_liq_trans>-nombre_ter  = sy-uname.
+            <lfs_liq_trans>-fecha_ter   = sy-datum.
+            <lfs_liq_trans>-hora_ter    = sy-uzeit.
+            <lfs_liq_trans>-icon        = '@08@'.
+***  Begin of change by DZ0005 **********************
+            lwa_liq = <lfs_liq_trans>.
+            APPEND lwa_liq TO lit_liq.
+
+            lwa_ebeln-ebeln = lv_ebeln.
+            lwa_ebeln-tknum = lwa_liq-tknum.
+            APPEND lwa_ebeln TO lit_ebeln.
+***  End of change by DZ0005 **********************
+          ENDIF.
+
+        ENDLOOP.
+
+        IF sy-subrc <> 0.
+          MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                  WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+        ENDIF.
+
+
+      ELSE.
+
+        LOOP AT lit_trans_ter ASSIGNING <lfs_trans_ter>.
+
+          READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              WITH KEY  bukrs = <lfs_trans_ter>-bukrs
+                                        tknum = <lfs_trans_ter>-tknum
+                                        shtyp = <lfs_trans_ter>-shtyp
+                                        tplst = <lfs_trans_ter>-tplst
+                                          BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+
+            <lfs_liq_trans>-icon        = '@0A@'.
+            lwa_liq = <lfs_liq_trans>.                      "++DZ0005
+            APPEND lwa_liq TO lit_liq.                      "++DZ0005
+
+          ENDIF.
+
+        ENDLOOP.
+
+        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+      ENDIF.
+
+      APPEND LINES OF lit_ret TO fp_ret.
+
+      CLEAR:  lv_tarifa, lv_month, lv_count, lv_pckg_no, lv_int_serv,
+              lwa_poheader, lwa_poheaderx, lwa_poitem, lwa_poitemx,
+              lwa_poschedule, lwa_poschedulex, lwa_poaccount,
+              lwa_poaccountx, lwa_poservices, lwa_ret,lwa_tdlnr_werks,
+              lv_ebeln.
+
+      REFRESH: lit_poitem, lit_poitemx, lit_poschedule, lit_poschedulex,
+                lit_poaccount, lit_poaccount, lit_poservices,
+                lit_ret_tmp, lit_trans_ter.
+
+    ENDAT.
+
+  ENDLOOP.
+
+***  Begin of change by DZ0005 **********************
+  IF lit_liq[] IS NOT INITIAL.
+
+    MODIFY zmmtt_liq_transp FROM TABLE lit_liq.
+    COMMIT WORK.
+
+  ENDIF.
+  IF lit_ebeln IS NOT INITIAL.
+
+    PERFORM f_save_po_text USING  lit_ebeln.
+
+  ENDIF.
+***  End of change by DZ0005 **********************
+
+ENDFORM.                    " F_CREATE_PO_TERC
+*&---------------------------------------------------------------------*
+*&      Form  F_CREATE_HE_TERC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_LIQ_TRANS  text
+*      <--P_FP_LIQ_TRANSP  text
+*      <--P_FP_RET  text
+*----------------------------------------------------------------------*
+FORM f_create_he_terc  USING    fp_liq_trans_sel  TYPE ty_t_liqtrans
+                       CHANGING fp_liq_transp     TYPE ty_t_liqtrans
+                                fp_ret            TYPE bapiret2_t.
+
+  TYPES: BEGIN OF lty_tdlnr_werks,
+           ebeln      TYPE  ebeln,                          "++DZ0003
+           bukrs      TYPE  bukrs,
+           tdlnr_ter  TYPE  zmmed_tdlnr_ter,
+           werks      TYPE  zmmed_werks_base,
+           shtyp      TYPE  shtyp,
+           bukrs_prov TYPE  bukrs,
+           tknum      TYPE  tknum,
+           tplst      TYPE  tplst,
+           daten      TYPE  datend,
+           tarf_tdlnr TYPE  zmmed_tar_tdlnr,
+           "ebeln       TYPE  ebeln, --DZ0003
+         END           OF    lty_tdlnr_werks.
+
+  DATA: lit_tdlnr_werks TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lit_trans_ter   TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lwa_tdlnr_werks TYPE lty_tdlnr_werks,
+
+        lit_ret         TYPE bapiret2_t,
+        lit_po_item     TYPE STANDARD TABLE OF bapiekpo,
+        lit_po_acc      TYPE STANDARD TABLE OF bapiekkn,
+        lit_po_srv      TYPE STANDARD TABLE OF bapiesll,
+        lwa_po_hdr      TYPE bapiekkol,
+        lwa_po_add      TYPE bapiaddress,
+
+        lwa_hdr_srv     TYPE bapiessrc,
+        lwa_esll_srv    TYPE bapiesllc,
+        lwa_acc_srv     TYPE bapiesknc,
+        lwa_accv_srv    TYPE bapiesklc,
+
+        lv_he           TYPE lblni,
+
+        lit_esll_srv    TYPE STANDARD TABLE OF bapiesllc,
+        lit_acc_srv     TYPE STANDARD TABLE OF bapiesknc,
+        lit_accv_srv    TYPE STANDARD TABLE OF bapiesklc.
+
+  DATA: lit_liq_trans TYPE ty_t_liqtrans,
+        lit_liq       TYPE ty_t_liqtrans,                   "++DZ0005
+        lwa_liq       TYPE zmmtt_liq_transp.                "++DZ0005
+
+  FIELD-SYMBOLS: <lfs_liq_trans>   TYPE  zmmtt_liq_transp,
+                 <lfs_liq_trans1>  TYPE  zmmtt_liq_transp,
+                 <lfs_tdlnr_werks> TYPE  lty_tdlnr_werks,
+                 <lfs_trans_ter>   TYPE  lty_tdlnr_werks,
+                 <lfs_hes>         TYPE  ty_hes,
+                 <lfs_po_item>     TYPE  bapiekpo,
+                 <lfs_po_acc>      TYPE  bapiekkn,
+                 <lfs_po_srv>      TYPE  bapiesll.
+
+  lit_liq_trans[] = fp_liq_transp[].
+
+  SORT lit_liq_trans BY bukrs tknum shtyp tplst.
+
+  LOOP AT fp_liq_trans_sel ASSIGNING <lfs_liq_trans>.
+
+    READ TABLE lit_liq_trans ASSIGNING <lfs_liq_trans1>
+                WITH KEY  bukrs = <lfs_liq_trans>-bukrs
+                          tknum = <lfs_liq_trans>-tknum
+                          shtyp = <lfs_liq_trans>-shtyp
+                          tplst = <lfs_liq_trans>-tplst
+                          BINARY SEARCH.
+
+    IF sy-subrc IS INITIAL.
+
+      IF <lfs_liq_trans1>-ebeln_ter IS INITIAL
+        OR <lfs_liq_trans1>-mblnr_ter IS NOT INITIAL.
+
+        CONTINUE.
+
+      ENDIF.
+
+      lwa_tdlnr_werks-bukrs       = <lfs_liq_trans1>-bukrs.
+      lwa_tdlnr_werks-tdlnr_ter   = <lfs_liq_trans1>-tdlnr_ter.
+      lwa_tdlnr_werks-werks       = <lfs_liq_trans1>-werks_ter.
+      lwa_tdlnr_werks-bukrs_prov  = <lfs_liq_trans1>-bukrs_prov.
+      lwa_tdlnr_werks-tknum       = <lfs_liq_trans1>-tknum.
+      lwa_tdlnr_werks-shtyp       = <lfs_liq_trans1>-shtyp.
+      lwa_tdlnr_werks-tplst       = <lfs_liq_trans1>-tplst.
+      lwa_tdlnr_werks-daten       = <lfs_liq_trans1>-daten.
+      lwa_tdlnr_werks-tarf_tdlnr  = <lfs_liq_trans1>-tarf_tdlnr.
+      lwa_tdlnr_werks-ebeln       = <lfs_liq_trans1>-ebeln_ter.
+      APPEND lwa_tdlnr_werks TO lit_tdlnr_werks.
+
+    ENDIF.
+
+  ENDLOOP.
+
+
+  CLEAR lwa_tdlnr_werks.
+
+  SORT lit_tdlnr_werks BY
+  ebeln.                                                    "++DZ0003
+  "bukrs tdlnr_ter werks shtyp. --DZ0003
+
+  LOOP AT lit_tdlnr_werks ASSIGNING <lfs_tdlnr_werks>.
+
+    lwa_tdlnr_werks = <lfs_tdlnr_werks>.
+    APPEND lwa_tdlnr_werks TO lit_trans_ter.
+
+    AT END OF
+      ebeln.                                                "++DZ0003
+      "shtyp.--DZ0003
+
+      CALL FUNCTION 'BAPI_PO_GETDETAIL'
+        EXPORTING
+          purchaseorder              = lwa_tdlnr_werks-ebeln
+          items                      = 'X'
+          account_assignment         = 'X'
+          services                   = 'X'
+        IMPORTING
+          po_header                  = lwa_po_hdr
+          po_address                 = lwa_po_add
+        TABLES
+          po_items                   = lit_po_item
+          po_item_account_assignment = lit_po_acc
+          po_item_services           = lit_po_srv
+          return                     = lit_ret.
+
+      READ TABLE it_hes ASSIGNING <lfs_hes>
+                  WITH KEY  bukrs = lwa_tdlnr_werks-bukrs_prov
+                            shtyp = lwa_tdlnr_werks-shtyp
+                            tipo  = 'T1'
+                            tplst = lwa_tdlnr_werks-tplst
+                            BINARY SEARCH.
+
+      IF sy-subrc IS INITIAL.
+
+        READ TABLE lit_po_item ASSIGNING <lfs_po_item>
+        INDEX 1.
+
+        IF sy-subrc IS INITIAL.
+
+          READ TABLE lit_po_acc ASSIGNING <lfs_po_acc>
+          INDEX 1.
+
+          IF sy-subrc IS INITIAL.
+
+            READ TABLE lit_po_srv ASSIGNING <lfs_po_srv>
+            INDEX 2.
+
+            IF sy-subrc IS INITIAL.
+
+*** Population of Header
+
+              lwa_hdr_srv-pckg_no     = 1.
+              lwa_hdr_srv-short_text  = <lfs_po_item>-short_text.
+              lwa_hdr_srv-po_number   = <lfs_po_item>-po_number.
+              lwa_hdr_srv-po_item     = <lfs_po_item>-po_item.
+              lwa_hdr_srv-accasscat   = <lfs_hes>-knttp.
+              lwa_hdr_srv-begdate     = v_date_popup.
+              lwa_hdr_srv-enddate     = v_date_popup.
+              lwa_hdr_srv-score_qual  = <lfs_hes>-calidad.
+              lwa_hdr_srv-score_time  = <lfs_hes>-oportuno.
+              lwa_hdr_srv-ref_doc_no  = <lfs_po_item>-po_number.
+              lwa_hdr_srv-acceptance  = 'X'.
+              lwa_hdr_srv-doc_date    = v_date_popup.
+              lwa_hdr_srv-post_date   = v_date_popup.
+
+
+              lwa_esll_srv-pckg_no    = 1.
+              lwa_esll_srv-line_no    = 1.
+              lwa_esll_srv-outl_level = '0'.
+              lwa_esll_srv-outl_ind   = 'X'.
+              lwa_esll_srv-subpckg_no = 2.
+              APPEND lwa_esll_srv TO lit_esll_srv.
+              CLEAR lwa_esll_srv.
+
+
+              lwa_esll_srv-pckg_no  = 2.
+              lwa_esll_srv-line_no  = 2.
+              lwa_esll_srv-ext_line = 10.
+              lwa_esll_srv-subpckg_no  = 0.
+
+              lwa_esll_srv-service    = <lfs_po_srv>-service.
+              lwa_esll_srv-short_text = <lfs_hes>-text_breve.
+              lwa_esll_srv-quantity   = <lfs_po_srv>-quantity.
+              lwa_esll_srv-gr_price   = <lfs_po_srv>-net_value.
+              APPEND lwa_esll_srv TO lit_esll_srv.
+              CLEAR lwa_esll_srv.
+
+
+              lwa_acc_srv-pckg_no     = 1.
+              lwa_acc_srv-serial_no   = 1.
+              lwa_acc_srv-gl_account  = <lfs_po_acc>-g_l_acct.
+              lwa_acc_srv-costcenter  = <lfs_po_acc>-cost_ctr.
+              APPEND lwa_acc_srv TO lit_acc_srv.
+
+              lwa_accv_srv-pckg_no     = 1.
+              lwa_accv_srv-line_no     = 2.
+              lwa_accv_srv-serno_line  = 1.
+              lwa_accv_srv-serial_no   = 1.
+              lwa_accv_srv-percentage  = 100.
+              lwa_accv_srv-quantity    = <lfs_po_srv>-quantity.
+              lwa_accv_srv-net_value   = <lfs_po_srv>-net_value.
+              APPEND lwa_accv_srv TO lit_accv_srv.
+
+              CALL FUNCTION 'BAPI_ENTRYSHEET_CREATE'
+                EXPORTING
+                  entrysheetheader            = lwa_hdr_srv
+                  testrun                     = ' '
+                IMPORTING
+                  entrysheet                  = lv_he
+                TABLES
+                  entrysheetaccountassignment = lit_acc_srv
+                  entrysheetservices          = lit_esll_srv
+                  entrysheetsrvaccassvalues   = lit_accv_srv
+                  return                      = lit_ret.
+
+              IF lv_he IS NOT INITIAL.
+
+                CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+                  EXPORTING
+                    wait = 'X'.
+                WAIT UP TO v_seg SECONDS.
+                LOOP AT lit_trans_ter ASSIGNING <lfs_trans_ter>.
+
+                  READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              WITH KEY  bukrs = <lfs_trans_ter>-bukrs
+                                        tknum = <lfs_trans_ter>-tknum
+                                        shtyp = <lfs_trans_ter>-shtyp
+                                        tplst = <lfs_trans_ter>-tplst
+                                                  BINARY SEARCH.
+
+                  IF sy-subrc IS INITIAL.
+
+                    <lfs_liq_trans>-mblnr_ter   = lv_he.
+                    <lfs_liq_trans>-mjahr_ter   = sy-datum+0(4).
+                    "IF <lfs_liq_trans>-tarf_remolq_real_alq IS INITIAL.
+                    <lfs_liq_trans>-stat_tdlnr  = '3'.
+                    "ENDIF.
+                    "<lfs_liq_trans>-stat_ic     = '2'.
+                    <lfs_liq_trans>-icon        = '@08@'.
+
+                    lwa_liq = <lfs_liq_trans>.              "++DZ0005
+                    APPEND lwa_liq TO lit_liq.              "++DZ0005
+
+                  ENDIF.
+
+                ENDLOOP.
+
+              ELSE.
+
+                LOOP AT lit_trans_ter ASSIGNING <lfs_trans_ter>.
+
+                  READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                    WITH KEY
+                    bukrs = <lfs_trans_ter>-bukrs
+                    tknum = <lfs_trans_ter>-tknum
+                    shtyp = <lfs_trans_ter>-shtyp
+                    tplst = <lfs_trans_ter>-tplst
+                    BINARY SEARCH.
+
+                  IF sy-subrc IS INITIAL.
+
+                    <lfs_liq_trans>-icon        = '@0A@'.
+                    lwa_liq = <lfs_liq_trans>.              "++DZ0005
+                    APPEND lwa_liq TO lit_liq.              "++DZ0005
+
+                  ENDIF.
+
+                ENDLOOP.
+
+                CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+              ENDIF.
+
+              APPEND LINES OF lit_ret TO fp_ret.
+
+            ENDIF.
+
+          ENDIF.
+
+        ENDIF.
+
+      ENDIF.
+
+      CLEAR:  lwa_po_hdr, lwa_po_add, lwa_hdr_srv,
+              lwa_esll_srv, lwa_acc_srv, lwa_accv_srv,
+              lv_he.
+
+      REFRESH:  lit_esll_srv, lit_acc_srv, lit_accv_srv,
+                lit_trans_ter, lit_ret, lit_po_item,
+                lit_po_acc, lit_po_srv.
+
+    ENDAT.
+
+  ENDLOOP.
+***  Begin of change by DZ0005 **********************
+  IF lit_liq[] IS NOT INITIAL.
+
+    MODIFY zmmtt_liq_transp FROM TABLE lit_liq.
+    COMMIT WORK.
+
+  ENDIF.
+***  End of change by DZ0005 **********************
+ENDFORM.                    " F_CREATE_HE_TERC
+*&---------------------------------------------------------------------*
+*&      Form  F_CREATE_PO_IC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_LIQ_TRANS  text
+*      <--P_FP_LIQ_TRANSP  text
+*      <--P_FP_RET  text
+*----------------------------------------------------------------------*
+FORM f_create_po_ic  USING    fp_liq_trans_sel  TYPE ty_t_liqtrans
+                       CHANGING fp_liq_transp     TYPE ty_t_liqtrans
+                                fp_ret            TYPE bapiret2_t.
+
+  TYPES: BEGIN OF lty_tdlnr_werks,
+           bukrs         TYPE  bukrs,
+           werks         TYPE  zmmed_werks,
+           ruta          TYPE  routr,                       "++DZ0003
+           lgort         TYPE  lgort_d,
+           tknum         TYPE  tknum,
+           shtyp         TYPE  shtyp,
+           tplst         TYPE  tplst,
+           daten         TYPE  datend,
+           tarf_ic       TYPE  zmmed_tarifa,
+           kostl         TYPE  zmmed_kostl_ic_t1,
+           werks_ter     TYPE zmmed_werks_base, "LHERAZO RQ17-19
+           flota         TYPE zmmed_flota, "LHERAZO RQ17-19
+           stat_tdlnr    TYPE zmmed_stat_tdlnr, "LHERAZO RQ17-19
+           tarif_ico     TYPE zmmed_tarif_ico, "LHERAZO RQ17-19
+           stat_ic       TYPE zmmed_stat_ic, "LHERAZO RQ17-19
+           tarif_costmod TYPE zmmtt_liq_transp-tarif_costmod, "MX007608 03.04.2025
+         END           OF    lty_tdlnr_werks,
+
+*** Begin of change by DZ0003 ***********************
+         BEGIN         OF    lty_tvrot,
+           route TYPE  route,
+           bezei TYPE  routbez,
+         END           OF    lty_tvrot.
+*** End of change by DZ0003 ***********************
+
+  DATA: lit_tdlnr_werks   TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lit_trans_ic      TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lwa_tdlnr_werks   TYPE lty_tdlnr_werks,
+
+        lv_tarifa         TYPE  zmmed_tarifa,
+        lv_month          TYPE  fcltx,
+        lv_ebeln          TYPE  ebeln,
+
+*** PO related Definitions
+        lwa_poheader      TYPE bapimepoheader,
+        lwa_poheaderx     TYPE bapimepoheaderx,
+        lwa_poitem        TYPE bapimepoitem,
+        lwa_poitemx       TYPE bapimepoitemx,
+        lwa_poschedule    TYPE bapimeposchedule,
+        lwa_poschedulex   TYPE bapimeposchedulx,
+        lwa_poaccount     TYPE bapimepoaccount,
+        lwa_poaccountx    TYPE bapimepoaccountx,
+        lwa_ret           TYPE bapiret2,
+
+        lit_poitem        TYPE STANDARD TABLE OF bapimepoitem,
+        lit_poitemx       TYPE STANDARD TABLE OF bapimepoitemx,
+        lit_poschedule    TYPE STANDARD TABLE OF bapimeposchedule,
+        lit_poschedulex   TYPE STANDARD TABLE OF bapimeposchedulx,
+        lit_poaccount     TYPE STANDARD TABLE OF bapimepoaccount,
+        lit_poaccountx    TYPE STANDARD TABLE OF bapimepoaccountx,
+
+        lit_ret           TYPE bapiret2_t,
+        lit_ret_tmp       TYPE bapiret2_t,
+
+        lit_liq_trans_sel TYPE ty_t_liqtrans,
+
+        lv_count          TYPE ebelp,
+        lv_werks          TYPE werks_d,                     "++DZ0002
+        lit_tvrot         TYPE STANDARD TABLE OF lty_tvrot. "++DZ0003
+
+***  Begin of change by DZ0005 **********************
+  DATA:	lit_liq   TYPE ty_t_liqtrans,
+        lwa_liq   TYPE zmmtt_liq_transp,
+
+        lwa_ebeln TYPE ty_ebeln_dt,
+        lit_ebeln TYPE ty_t_ebeln_dt.
+***  End of change by DZ0005 **********************
+
+  "---------LHERAZO------------------
+  TYPES:
+    BEGIN OF lty_tdlnr_aux,
+      werks TYPE zmmtt_liq_transp-werks_ter,
+      shtyp TYPE zmmtt_liq_transp-shtyp,
+      flota TYPE zmmtt_liq_transp-flota,
+    END OF lty_tdlnr_aux.
+  DATA: lt_aux TYPE STANDARD TABLE OF lty_tdlnr_aux WITH HEADER LINE.
+  DATA: lw_aux    TYPE lty_tdlnr_aux,
+        lv_werks2 TYPE zmmtt_liq_transp-werks_ter,
+        lv_shtyp  TYPE zmmtt_liq_transp-shtyp,
+        lv_tplst  TYPE zmmtt_liq_transp-tplst,
+        lv_flota  TYPE zmmtt_liq_transp-flota.
+  "------------LHERAZO-----------------
+
+  FIELD-SYMBOLS: <lfs_row>          TYPE  lvc_s_row,
+                 <lfs_liq_trans>    TYPE  zmmtt_liq_transp,
+                 <lfs_poic>         TYPE  ty_poic,
+                 <lfs_tdlnr_werks>  TYPE  lty_tdlnr_werks,
+                 <lfs_tdlnr_werks2> TYPE  lty_tdlnr_werks, "LH
+                 <lfs_trans_ic>     TYPE  lty_tdlnr_werks,
+                 <lfs_cesp>         TYPE  ty_cesp,
+                 <lfs_tvrot>        TYPE  lty_tvrot,        "++DZ0003.
+                 <fs_aux>           TYPE lty_tdlnr_aux.   "LH
+
+
+  lit_liq_trans_sel[] = fp_liq_trans_sel[].
+
+  DELETE lit_liq_trans_sel WHERE ebeln_ic IS NOT INITIAL.
+
+  LOOP AT lit_liq_trans_sel ASSIGNING <lfs_liq_trans>.
+
+*** Begin of change by DZ0002 ************************
+    lv_werks = <lfs_liq_trans>-tplst.
+
+    PERFORM f_get_cbase USING it_r_shtyps
+                              it_transp_cbase
+                              <lfs_liq_trans>-tknum
+                              <lfs_liq_trans>-shtyp
+                              <lfs_liq_trans>-tplst
+                              CHANGING lv_werks.
+*** End of change by DZ0002 ************************
+
+    READ TABLE it_cesp ASSIGNING <lfs_cesp>
+                        WITH KEY  bukrs = <lfs_liq_trans>-bukrs
+                                  tplst = lv_werks
+                                  "<lfs_liq_trans>-tplst --DZ0002
+                                  shtyp = <lfs_liq_trans>-shtyp
+                                  tipo  = 'T1'
+                                  BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      lwa_tdlnr_werks-bukrs       = <lfs_liq_trans>-bukrs.
+      lwa_tdlnr_werks-werks       = <lfs_cesp>-werks_reg.
+      lwa_tdlnr_werks-ruta        = <lfs_liq_trans>-ruta.   "++DZ0003
+      lwa_tdlnr_werks-lgort       = <lfs_cesp>-lgort.
+      lwa_tdlnr_werks-tknum       = <lfs_liq_trans>-tknum.
+      lwa_tdlnr_werks-shtyp       = <lfs_liq_trans>-shtyp.
+      lwa_tdlnr_werks-tplst       = <lfs_liq_trans>-tplst.
+      lwa_tdlnr_werks-daten       = <lfs_liq_trans>-daten.
+      lwa_tdlnr_werks-tarf_ic     = <lfs_liq_trans>-tarf_ic.
+      lwa_tdlnr_werks-kostl       = <lfs_cesp>-kostl_ic.
+      lwa_tdlnr_werks-flota       = <lfs_liq_trans>-flota.
+      lwa_tdlnr_werks-werks_ter   = <lfs_liq_trans>-werks_ter.
+      lwa_tdlnr_werks-stat_tdlnr  = <lfs_liq_trans>-stat_tdlnr.
+      lwa_tdlnr_werks-tarif_ico   = <lfs_liq_trans>-tarif_ico. "LHERAZO
+      lwa_tdlnr_werks-stat_ic     = <lfs_liq_trans>-stat_ic. "LHERAZO
+      lwa_tdlnr_werks-tarif_costmod = <lfs_liq_trans>-tarif_costmod. "mx007608 03.04.2025
+
+      IF <lfs_liq_trans>-tarif_ico IS INITIAL.
+        lwa_tdlnr_werks-tarif_ico  = <lfs_liq_trans>-tarf_ic.
+      ENDIF.
+      APPEND lwa_tdlnr_werks TO lit_tdlnr_werks.
+
+    ENDIF.
+
+  ENDLOOP.
+
+  CLEAR lwa_tdlnr_werks.
+
+  SORT lit_tdlnr_werks BY bukrs werks
+                                ruta.                       "++DZ0003
+*** Begin of change by DZ0003 ***********************
+  IF lit_tdlnr_werks IS NOT INITIAL.
+
+    SELECT  route
+            bezei
+            FROM tvrot
+            INTO TABLE lit_tvrot
+            FOR ALL ENTRIES IN lit_tdlnr_werks
+            WHERE spras = sy-langu
+            AND   route = lit_tdlnr_werks-ruta.
+    IF sy-subrc IS INITIAL.
+
+      SORT lit_tvrot BY route.
+
+    ENDIF.
+
+  ENDIF.
+*** End of change by DZ0003 ***********************
+  "---------------LHERAZO---------------
+  LOOP AT lit_tdlnr_werks ASSIGNING <lfs_tdlnr_werks>.
+    lw_aux-werks = <lfs_tdlnr_werks>-werks_ter.
+    lw_aux-shtyp = <lfs_tdlnr_werks>-shtyp.
+    lw_aux-flota = <lfs_tdlnr_werks>-flota.
+    APPEND lw_aux TO lt_aux.
+  ENDLOOP.
+  SORT lt_aux BY werks shtyp flota DESCENDING.
+
+  DELETE ADJACENT DUPLICATES FROM lt_aux COMPARING ALL FIELDS.
+  CLEAR lw_aux.
+
+  LOOP AT lt_aux ASSIGNING <fs_aux>.
+    lv_werks2 = <fs_aux>-werks.
+    lv_shtyp = <fs_aux>-shtyp.
+    lv_flota = <fs_aux>-flota.
+
+    "---------------FIN LHERAZO---------------
+    SORT lit_tdlnr_werks  BY tknum shtyp werks_ter DESCENDING.
+    LOOP AT lit_tdlnr_werks ASSIGNING <lfs_tdlnr_werks2>. "LHERAZO
+      IF <lfs_tdlnr_werks2>-werks_ter = lv_werks2 AND <lfs_tdlnr_werks2>-shtyp = lv_shtyp
+        AND <lfs_tdlnr_werks2>-flota = lv_flota AND ( <lfs_tdlnr_werks2>-tarf_ic NE 0 OR  <lfs_tdlnr_werks2>-tarif_costmod NE 0 ) "MX007608 03.04.2025
+        AND <lfs_tdlnr_werks2>-stat_ic = '1'. "LHERAZO
+
+        IF ( <lfs_tdlnr_werks2>-flota = 'T' AND <lfs_tdlnr_werks2>-stat_tdlnr <> 3 ) .
+
+        ELSEIF ( <lfs_tdlnr_werks2>-flota = 'T' AND <lfs_tdlnr_werks2>-stat_tdlnr = 3 )  OR <lfs_tdlnr_werks2>-flota = 'P'.
+          lv_tarifa = lv_tarifa + <lfs_tdlnr_werks2>-tarif_ico.
+          lwa_tdlnr_werks = <lfs_tdlnr_werks2>.
+          APPEND lwa_tdlnr_werks TO lit_trans_ic.
+
+**** Populate Header for PO
+          READ TABLE it_poic ASSIGNING <lfs_poic>
+          WITH KEY  bukrs = lwa_tdlnr_werks-bukrs
+                    shtyp = lwa_tdlnr_werks-shtyp
+                    tipo  = 'T1'
+                    BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+
+            lwa_poheader-doc_type   = <lfs_poic>-bsart.
+            lwa_poheader-vendor     = <lfs_poic>-lifnr.
+            lwa_poheader-purch_org  = <lfs_poic>-ekorg.
+            lwa_poheader-pur_group  = <lfs_poic>-ekgrp.
+            lwa_poheader-comp_code  = lwa_tdlnr_werks-bukrs.
+            lwa_poheader-vper_start = v_date_popup.
+            lwa_poheader-vper_end   = v_date_popup.
+
+            lwa_poheaderx-doc_type    = sy-abcde+23(1).
+            lwa_poheaderx-vendor      = sy-abcde+23(1).
+            lwa_poheaderx-purch_org   = sy-abcde+23(1).
+            lwa_poheaderx-pur_group   = sy-abcde+23(1).
+            lwa_poheaderx-comp_code   = sy-abcde+23(1).
+            lwa_poheaderx-vper_start  = sy-abcde+23(1).
+            lwa_poheaderx-vper_end    = sy-abcde+23(1).
+
+*      AT END OF ruta.                                       "++DZ0003
+            "werks. --DZ0003
+
+*** Populate Line Item
+            lwa_poitem-po_item        = 10 ."lv_count = lv_count + 10."LHERAZO
+            lwa_poitemx-po_item       = lwa_poitem-po_item.
+            lwa_poitemx-po_itemx      = 'X'.
+
+            lwa_poitem-po_unit        = <lfs_poic>-meins.
+            lwa_poitemx-po_unit       = sy-abcde+23(1).
+
+            lwa_poitem-quantity       = <lfs_poic>-menge.
+            lwa_poitemx-quantity      = sy-abcde+23(1).
+
+            lwa_poitem-material       = <lfs_poic>-matnr.
+            lwa_poitemx-material      = sy-abcde+23(1).
+
+            lwa_poitem-plant          = lwa_tdlnr_werks-werks.
+            lwa_poitemx-plant         = sy-abcde+23(1).
+
+            lwa_poitem-stge_loc          = lwa_tdlnr_werks-lgort.
+            lwa_poitemx-stge_loc         = sy-abcde+23(1).
+
+            lwa_poitem-acctasscat     = <lfs_poic>-knttp.
+            lwa_poitemx-acctasscat    = 'X'.
+
+            lwa_poitem-net_price      = lv_tarifa.
+            lwa_poitemx-net_price     = 'X'.
+
+*** Begin of change by DZ0003 ***************************
+
+            READ TABLE lit_tvrot ASSIGNING <lfs_tvrot>
+                                  WITH KEY route  = lwa_tdlnr_werks-ruta
+                                  BINARY SEARCH.
+            IF sy-subrc IS INITIAL.
+
+              lwa_poitem-short_text   = <lfs_tvrot>-bezei.
+              lwa_poitemx-short_text  = 'X'.
+
+            ENDIF.
+
+*** End of change by DZ0003 *****************************
+
+***            APPEND lwa_poitem TO lit_poitem.
+***            APPEND lwa_poitemx TO lit_poitemx.
+
+            lwa_poschedule-po_item        = lwa_poitem-po_item.
+*            lwa_poschedule-sched_line     = lwa_poitem-po_item.
+            lwa_poschedulex-po_item       = lwa_poitem-po_item.
+*            lwa_poschedulex-sched_line    = lwa_poitem-po_item.
+*           Upgrade EHP8 T-Systems  15.03.2025
+*           Asignar cantidad a Schudele Line y 1 a linea de Schedule
+            lwa_poschedule-sched_line     = 1.
+            lwa_poschedulex-sched_line    = 1.
+            lwa_poschedule-quantity       = lwa_poitem-quantity.
+            lwa_poschedulex-quantity      = 'X'.
+
+            lwa_poschedule-delivery_date  = v_date_popup.
+            lwa_poschedulex-delivery_date = 'X'.
+
+*            APPEND lwa_poschedule  TO lit_poschedule.
+*            APPEND lwa_poschedulex TO lit_poschedulex.
+
+            lwa_poaccount-po_item     = lwa_poitem-po_item.
+            lwa_poaccountx-po_item    = lwa_poitem-po_item.
+
+            lwa_poaccountx-po_itemx   = 'X'.
+
+            lwa_poaccount-serial_no     = '01'.
+            lwa_poaccountx-serial_no    = '01'.
+            lwa_poaccountx-serial_nox   = 'X'.
+
+            lwa_poaccount-costcenter  = lwa_tdlnr_werks-kostl.
+            lwa_poaccountx-costcenter  = 'X'.
+
+***            APPEND lwa_poaccount TO lit_poaccount.
+***            APPEND lwa_poaccountx TO lit_poaccountx.
+
+
+*      ENDAT.
+
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+    IF lwa_poitem-net_price > 0.
+      APPEND lwa_poitem TO lit_poitem.
+      APPEND lwa_poitemx TO lit_poitemx.
+      APPEND lwa_poschedule  TO lit_poschedule.
+      APPEND lwa_poschedulex TO lit_poschedulex.
+      APPEND lwa_poaccount TO lit_poaccount.
+      APPEND lwa_poaccountx TO lit_poaccountx.
+    ENDIF.
+    "------------LHERAZO--------------
+    CLEAR: lwa_poitem,
+    lwa_poitemx, lwa_poschedule, lwa_poschedulex, lwa_poaccount,
+    lwa_poaccountx ,lwa_tdlnr_werks.
+    "------------FIN LHERAZO--------------
+
+    IF lit_poitem[] IS NOT INITIAL.
+
+      CALL FUNCTION 'BAPI_PO_CREATE1'
+        EXPORTING
+          poheader         = lwa_poheader
+          poheaderx        = lwa_poheaderx
+          no_price_from_po = 'X'
+        IMPORTING
+          exppurchaseorder = lv_ebeln
+        TABLES
+          return           = lit_ret
+          poitem           = lit_poitem
+          poitemx          = lit_poitemx
+          poschedule       = lit_poschedule
+          poschedulex      = lit_poschedulex
+          poaccount        = lit_poaccount
+          poaccountx       = lit_poaccountx.
+
+    ENDIF.
+
+    IF lv_ebeln IS NOT INITIAL.
+
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+        EXPORTING
+          wait = 'X'.
+      WAIT UP TO v_seg SECONDS.
+      LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+        READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                            WITH KEY  bukrs = <lfs_trans_ic>-bukrs
+                                      tknum = <lfs_trans_ic>-tknum
+                                      shtyp = <lfs_trans_ic>-shtyp
+                                      tplst = <lfs_trans_ic>-tplst
+                                        BINARY SEARCH.
+
+        IF sy-subrc IS INITIAL.
+
+          <lfs_liq_trans>-ebeln_ic  = lv_ebeln.
+          <lfs_liq_trans>-nombre_ic = sy-uname.
+          <lfs_liq_trans>-fecha_ic  = sy-datum.
+          <lfs_liq_trans>-hora_ic   = sy-uzeit.
+          <lfs_liq_trans>-icon      = '@08@'.
+          <lfs_liq_trans>-stat_ic   = '2'. "LHERAZO 21.08.2024
+
+***  Begin of change by DZ0005 **********************
+          lwa_liq = <lfs_liq_trans>.
+          APPEND lwa_liq TO lit_liq.
+
+          lwa_ebeln-ebeln = lv_ebeln.
+          lwa_ebeln-tknum = lwa_liq-tknum.
+          APPEND lwa_ebeln TO lit_ebeln.
+***  End of change by DZ0005 **********************
+
+        ENDIF.
+
+      ENDLOOP.
+
+    ELSE.
+
+      LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+        READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+          WITH KEY
+          bukrs = <lfs_trans_ic>-bukrs
+          tknum = <lfs_trans_ic>-tknum
+          shtyp = <lfs_trans_ic>-shtyp
+          tplst = <lfs_trans_ic>-tplst
+          BINARY SEARCH.
+
+        IF sy-subrc IS INITIAL.
+
+          <lfs_liq_trans>-icon        = '@0A@'.
+
+          lwa_liq = <lfs_liq_trans>.                        "++DZ0005
+          APPEND lwa_liq TO lit_liq.                        "++DZ0005
+
+        ENDIF.
+
+      ENDLOOP.
+
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+    ENDIF.
+
+    APPEND LINES OF lit_ret TO fp_ret.
+
+***  Begin of change by DZ0005 **********************
+    IF lit_liq[] IS NOT INITIAL.
+
+      MODIFY zmmtt_liq_transp FROM TABLE lit_liq.
+      COMMIT WORK.
+
+    ENDIF.
+
+    IF lit_ebeln IS NOT INITIAL.
+
+      PERFORM f_save_po_text USING  lit_ebeln.
+
+    ENDIF.
+
+    REFRESH: lit_ret, lit_poitem, lit_poitemx, lit_poschedule, lit_poschedulex, lit_poaccount, lit_poaccountx, lit_liq, lit_trans_ic . "LHERAZO
+    CLEAR: lwa_poheader, lwa_poitem, lwa_poschedule, lwa_poschedulex, lwa_poaccount, lwa_poaccountx, lwa_poheaderx, lv_tarifa. "LHERAZO
+
+
+  ENDLOOP.
+***  End of change by DZ0005 **********************
+ENDFORM.                    " F_CREATE_PO_IC
+
+
+*"MX007608 07.07.2023 ADD <INI>
+"Operaciones Intercompany OWENS
+*&---------------------------------------------------------------------*
+*&      Form  F_CREATE_PO_IC_OW
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_LIQ_TRANS  text
+*      <--P_FP_LIQ_TRANSP  text
+*      <--P_FP_RET  text
+*----------------------------------------------------------------------*
+FORM f_create_po_ic_ow  USING   fp_liq_trans_sel  TYPE ty_t_liqtrans
+                                fp_mtart          TYPE mara-mtart
+                                fp_shtyp       TYPE shtyp
+                       CHANGING fp_liq_transp     TYPE ty_t_liqtrans
+                                fp_ret            TYPE bapiret2_t.
+
+  TYPES: BEGIN OF lty_tdlnr_werks,
+           bukrs   TYPE  bukrs,
+           werks   TYPE  zmmed_werks,
+           ruta    TYPE  routr,                             "++DZ0003
+           lgort   TYPE  lgort_d,
+           tknum   TYPE  tknum,
+           shtyp   TYPE  shtyp,
+           tplst   TYPE  tplst,
+           daten   TYPE  datend,
+           tarf_ic TYPE  zmmed_tarifa,
+           kostl   TYPE  zmmed_kostl_ic_t1,
+           aufnr   TYPE  aufnr, "MX007608 07.07.2023 ADD
+         END           OF    lty_tdlnr_werks,
+
+*** Begin of change by DZ0003 ***********************
+         BEGIN         OF    lty_tvrot,
+           route TYPE  route,
+           bezei TYPE  routbez,
+         END           OF    lty_tvrot.
+*** End of change by DZ0003 ***********************
+
+  DATA: lit_tdlnr_werks   TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lit_trans_ic      TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lwa_tdlnr_werks   TYPE lty_tdlnr_werks,
+
+        lv_tarifa         TYPE  zmmed_tarifa,
+        lv_month          TYPE  fcltx,
+        lv_ebeln          TYPE  ebeln,
+
+*** PO related Definitions
+        lwa_poheader      TYPE bapimepoheader,
+        lwa_poheaderx     TYPE bapimepoheaderx,
+        lwa_poitem        TYPE bapimepoitem,
+        lwa_poitemx       TYPE bapimepoitemx,
+        lwa_poschedule    TYPE bapimeposchedule,
+        lwa_poschedulex   TYPE bapimeposchedulx,
+        lwa_poaccount     TYPE bapimepoaccount,
+        lwa_poaccountx    TYPE bapimepoaccountx,
+        lwa_ret           TYPE bapiret2,
+
+        lit_poitem        TYPE STANDARD TABLE OF bapimepoitem,
+        lit_poitemx       TYPE STANDARD TABLE OF bapimepoitemx,
+        lit_poschedule    TYPE STANDARD TABLE OF bapimeposchedule,
+        lit_poschedulex   TYPE STANDARD TABLE OF bapimeposchedulx,
+        lit_poaccount     TYPE STANDARD TABLE OF bapimepoaccount,
+        lit_poaccountx    TYPE STANDARD TABLE OF bapimepoaccountx,
+
+        lit_ret           TYPE bapiret2_t,
+        lit_ret_tmp       TYPE bapiret2_t,
+
+        lit_liq_trans_sel TYPE ty_t_liqtrans,
+
+        lv_count          TYPE ebelp,
+        lv_werks          TYPE werks_d,                     "++DZ0002
+        lit_tvrot         TYPE STANDARD TABLE OF lty_tvrot. "++DZ0003
+
+***  Begin of change by DZ0005 **********************
+  DATA:	lit_liq   TYPE ty_t_liqtrans,
+        lwa_liq   TYPE zmmtt_liq_transp,
+
+        lwa_ebeln TYPE ty_ebeln_dt,
+        lit_ebeln TYPE ty_t_ebeln_dt.
+***  End of change by DZ0005 **********************
+
+  FIELD-SYMBOLS: <lfs_row>         TYPE  lvc_s_row,
+                 <lfs_liq_trans>   TYPE  zmmtt_liq_transp,
+                 <lfs_poic>        TYPE  ty_poic,
+                 <lfs_tdlnr_werks> TYPE  lty_tdlnr_werks,
+                 <lfs_trans_ic>    TYPE  lty_tdlnr_werks,
+                 <lfs_cesp>        TYPE  ty_cesp,
+                 <lfs_tvrot>       TYPE  lty_tvrot.         "++DZ0003.
+
+  lit_liq_trans_sel[] = fp_liq_trans_sel[].
+
+  DELETE lit_liq_trans_sel WHERE ebeln_ic IS NOT INITIAL.
+
+  LOOP AT lit_liq_trans_sel ASSIGNING <lfs_liq_trans>.
+
+    lv_werks = <lfs_liq_trans>-tplst.
+
+    PERFORM f_get_cbase USING it_r_shtyps
+                              it_transp_cbase
+                              <lfs_liq_trans>-tknum
+                              <lfs_liq_trans>-shtyp
+                              <lfs_liq_trans>-tplst
+                              CHANGING lv_werks.
+
+    READ TABLE it_cesp ASSIGNING <lfs_cesp>
+                        WITH KEY  bukrs = <lfs_liq_trans>-bukrs
+                                  tplst = lv_werks
+                                  shtyp = <lfs_liq_trans>-shtyp
+                                  tipo  = 'T1'
+                                  BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      lwa_tdlnr_werks-bukrs       = <lfs_liq_trans>-bukrs.
+      lwa_tdlnr_werks-werks       = <lfs_cesp>-werks_reg.
+      lwa_tdlnr_werks-ruta        = <lfs_liq_trans>-ruta.   "++DZ0003
+      lwa_tdlnr_werks-lgort       = <lfs_cesp>-lgort.
+      lwa_tdlnr_werks-tknum       = <lfs_liq_trans>-tknum.
+      lwa_tdlnr_werks-shtyp       = <lfs_liq_trans>-shtyp.
+      lwa_tdlnr_werks-tplst       = <lfs_liq_trans>-tplst.
+      lwa_tdlnr_werks-daten       = <lfs_liq_trans>-daten.
+      lwa_tdlnr_werks-tarf_ic     = <lfs_liq_trans>-tarf_ic.
+      lwa_tdlnr_werks-kostl       = <lfs_cesp>-kostl_ic.
+      lwa_tdlnr_werks-aufnr       = <lfs_cesp>-aufnr_ic.
+      APPEND lwa_tdlnr_werks TO lit_tdlnr_werks.
+
+    ENDIF.
+
+  ENDLOOP.
+
+  CLEAR lwa_tdlnr_werks.
+
+  SORT lit_tdlnr_werks BY bukrs werks
+                                  ruta.                     "++DZ0003
+*** Begin of change by DZ0003 ***********************
+  IF lit_tdlnr_werks IS NOT INITIAL.
+
+    SELECT  route
+            bezei
+            FROM tvrot
+            INTO TABLE lit_tvrot
+            FOR ALL ENTRIES IN lit_tdlnr_werks
+            WHERE spras = sy-langu
+            AND   route = lit_tdlnr_werks-ruta.
+    IF sy-subrc IS INITIAL.
+
+      SORT lit_tvrot BY route.
+
+    ENDIF.
+
+  ENDIF.
+*** End of change by DZ0003 ***********************
+  LOOP AT lit_tdlnr_werks ASSIGNING <lfs_tdlnr_werks>.
+
+    lv_tarifa = lv_tarifa + <lfs_tdlnr_werks>-tarf_ic.
+
+    lwa_tdlnr_werks = <lfs_tdlnr_werks>.
+    APPEND lwa_tdlnr_werks TO lit_trans_ic.
+
+**** Populate Header for PO
+    READ TABLE it_poic ASSIGNING <lfs_poic>
+    WITH KEY  bukrs = lwa_tdlnr_werks-bukrs
+              shtyp = fp_shtyp
+              tipo  = 'T1'
+              BINARY SEARCH.
+
+    IF sy-subrc IS INITIAL.
+
+      lwa_poheader-doc_type   = <lfs_poic>-bsart.
+      lwa_poheader-vendor     = <lfs_poic>-lifnr.
+      lwa_poheader-purch_org  = <lfs_poic>-ekorg.
+      lwa_poheader-pur_group  = <lfs_poic>-ekgrp.
+      lwa_poheader-comp_code  = lwa_tdlnr_werks-bukrs.
+      lwa_poheader-vper_start = v_date_popup.
+      lwa_poheader-vper_end   = v_date_popup.
+
+      lwa_poheaderx-doc_type    = sy-abcde+23(1).
+      lwa_poheaderx-vendor      = sy-abcde+23(1).
+      lwa_poheaderx-purch_org   = sy-abcde+23(1).
+      lwa_poheaderx-pur_group   = sy-abcde+23(1).
+      lwa_poheaderx-comp_code   = sy-abcde+23(1).
+      lwa_poheaderx-vper_start  = sy-abcde+23(1).
+      lwa_poheaderx-vper_end    = sy-abcde+23(1).
+
+      AT END OF "werks.
+                ruta.                                       "++DZ0003
+*** Populate Line Item
+        lwa_poitem-po_item        = lv_count = lv_count + 10.
+        lwa_poitemx-po_item       = lwa_poitem-po_item.
+        lwa_poitemx-po_itemx      = 'X'.
+
+        lwa_poitem-po_unit        = <lfs_poic>-meins.
+        lwa_poitemx-po_unit       = sy-abcde+23(1).
+
+        lwa_poitem-quantity       = <lfs_poic>-menge.
+        lwa_poitemx-quantity      = sy-abcde+23(1).
+
+        lwa_poitem-material       = <lfs_poic>-matnr.
+        lwa_poitemx-material      = sy-abcde+23(1).
+
+        lwa_poitem-plant          = lwa_tdlnr_werks-werks.
+        lwa_poitemx-plant         = sy-abcde+23(1).
+
+        lwa_poitem-stge_loc          = lwa_tdlnr_werks-lgort.
+        lwa_poitemx-stge_loc         = sy-abcde+23(1).
+
+        lwa_poitem-acctasscat     = <lfs_poic>-knttp.
+        lwa_poitemx-acctasscat    = 'X'.
+
+        lwa_poitem-net_price      = lv_tarifa.
+        lwa_poitemx-net_price     = 'X'.
+*** Begin of change by DZ0003 ***************************
+
+        READ TABLE lit_tvrot ASSIGNING <lfs_tvrot>
+                              WITH KEY route  = lwa_tdlnr_werks-ruta
+                              BINARY SEARCH.
+        IF sy-subrc IS INITIAL.
+
+          lwa_poitem-short_text   = <lfs_tvrot>-bezei.
+          lwa_poitemx-short_text  = 'X'.
+
+        ENDIF.
+
+*** End of change by DZ0003 *****************************
+        APPEND lwa_poitem TO lit_poitem.
+        APPEND lwa_poitemx TO lit_poitemx.
+
+        lwa_poschedule-po_item        = lwa_poitem-po_item.
+*        lwa_poschedule-sched_line     = lwa_poitem-po_item.
+        lwa_poschedulex-po_item       = lwa_poitem-po_item.
+*        lwa_poschedulex-sched_line    = lwa_poitem-po_item.
+*       Upgrade EHP8 T-Systems  15.03.2025
+*       Asignar cantidad a Schudele Line y 1 a linea de Schedule
+        lwa_poschedule-sched_line     = 1.
+        lwa_poschedulex-sched_line    = 1.
+        lwa_poschedule-quantity       = lwa_poitem-quantity.
+        lwa_poschedulex-quantity      = 'X'.
+
+        lwa_poschedule-delivery_date  = v_date_popup.
+        lwa_poschedulex-delivery_date = 'X'.
+
+        APPEND lwa_poschedule  TO lit_poschedule.
+        APPEND lwa_poschedulex TO lit_poschedulex.
+
+        lwa_poaccount-po_item     = lwa_poitem-po_item.
+        lwa_poaccountx-po_item    = lwa_poitem-po_item.
+
+        lwa_poaccountx-po_itemx   = 'X'.
+
+        lwa_poaccount-serial_no     = '01'.
+        lwa_poaccountx-serial_no    = '01'.
+        lwa_poaccountx-serial_nox   = 'X'.
+
+        IF fp_mtart EQ 'VERP'.
+          lwa_poaccount-costcenter  = lwa_tdlnr_werks-kostl.
+          lwa_poaccountx-costcenter  = 'X'.
+        ELSE.
+          lwa_poaccount-orderid  = lwa_tdlnr_werks-aufnr.
+          lwa_poaccountx-orderid  = 'X'.
+        ENDIF.
+
+        APPEND lwa_poaccount TO lit_poaccount.
+        APPEND lwa_poaccountx TO lit_poaccountx.
+
+        CLEAR:  lv_tarifa, lwa_poitem,
+        lwa_poitemx, lwa_poschedule, lwa_poschedulex, lwa_poaccount,
+        lwa_poaccountx ,lwa_tdlnr_werks.
+
+      ENDAT.
+
+    ENDIF.
+
+  ENDLOOP.
+
+  IF lit_poitem[] IS NOT INITIAL.
+
+    CALL FUNCTION 'BAPI_PO_CREATE1'
+      EXPORTING
+        poheader         = lwa_poheader
+        poheaderx        = lwa_poheaderx
+        no_price_from_po = 'X'
+      IMPORTING
+        exppurchaseorder = lv_ebeln
+      TABLES
+        return           = lit_ret
+        poitem           = lit_poitem
+        poitemx          = lit_poitemx
+        poschedule       = lit_poschedule
+        poschedulex      = lit_poschedulex
+        poaccount        = lit_poaccount
+        poaccountx       = lit_poaccountx.
+
+  ENDIF.
+
+  IF lv_ebeln IS NOT INITIAL.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait = 'X'.
+    WAIT UP TO v_seg SECONDS.
+    LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+      READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                          WITH KEY  bukrs = <lfs_trans_ic>-bukrs
+                                    tknum = <lfs_trans_ic>-tknum
+                                    shtyp = <lfs_trans_ic>-shtyp
+                                    tplst = <lfs_trans_ic>-tplst
+                                      BINARY SEARCH.
+
+      IF sy-subrc IS INITIAL.
+
+        <lfs_liq_trans>-ebeln_ic  = lv_ebeln.
+        <lfs_liq_trans>-nombre_ic = sy-uname.
+        <lfs_liq_trans>-fecha_ic  = sy-datum.
+        <lfs_liq_trans>-hora_ic   = sy-uzeit.
+        <lfs_liq_trans>-icon      = '@08@'.
+
+***  Begin of change by DZ0005 **********************
+        lwa_liq = <lfs_liq_trans>.
+        APPEND lwa_liq TO lit_liq.
+
+        lwa_ebeln-ebeln = lv_ebeln.
+        lwa_ebeln-tknum = lwa_liq-tknum.
+        APPEND lwa_ebeln TO lit_ebeln.
+***  End of change by DZ0005 **********************
+
+      ENDIF.
+
+    ENDLOOP.
+
+  ELSE.
+
+    LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+      READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+        WITH KEY
+        bukrs = <lfs_trans_ic>-bukrs
+        tknum = <lfs_trans_ic>-tknum
+        shtyp = <lfs_trans_ic>-shtyp
+        tplst = <lfs_trans_ic>-tplst
+        BINARY SEARCH.
+
+      IF sy-subrc IS INITIAL.
+
+        <lfs_liq_trans>-icon        = '@0A@'.
+
+        lwa_liq = <lfs_liq_trans>.                          "++DZ0005
+        APPEND lwa_liq TO lit_liq.                          "++DZ0005
+
+      ENDIF.
+
+    ENDLOOP.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+  ENDIF.
+
+  APPEND LINES OF lit_ret TO fp_ret.
+
+***  Begin of change by DZ0005 **********************
+  IF lit_liq[] IS NOT INITIAL.
+
+    MODIFY zmmtt_liq_transp FROM TABLE lit_liq.
+    COMMIT WORK.
+
+  ENDIF.
+  IF lit_ebeln IS NOT INITIAL.
+
+    PERFORM f_save_po_text USING  lit_ebeln.
+
+  ENDIF.
+***  End of change by DZ0005 **********************
+
+ENDFORM.                    " F_CREATE_PO_IC_OW
+*"MX007608 07.07.2023 ADD <FIN>
+
+*&---------------------------------------------------------------------*
+*&      Form  F_CREATE_MATDOC_IC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_LIQ_TRANS  text
+*      <--P_FP_LIQ_TRANSP  text
+*      <--P_FP_RET  text
+*----------------------------------------------------------------------*
+FORM f_create_matdoc_ic  USING  fp_liq_trans_sel  TYPE ty_t_liqtrans
+                       CHANGING fp_liq_transp     TYPE ty_t_liqtrans
+                                fp_ret            TYPE bapiret2_t.
+
+  TYPES: BEGIN OF lty_tdlnr_werks,
+           ebeln TYPE  ebeln,
+           bukrs TYPE  bukrs,
+           tknum TYPE  tknum,
+           shtyp TYPE  shtyp,
+           tplst TYPE  tplst,
+           daten TYPE  datend,
+         END           OF    lty_tdlnr_werks.
+
+  DATA: lit_tdlnr_werks   TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lit_trans_ic      TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lwa_tdlnr_werks   TYPE lty_tdlnr_werks,
+        lit_liq_trans_sel TYPE ty_t_liqtrans,
+
+
+        lwa_po_hdr        TYPE bapiekkol,
+        lwa_po_add        TYPE bapiaddress,
+        lit_po_item       TYPE STANDARD TABLE OF bapiekpo,
+
+        lwa_gm_hdr        TYPE bapi2017_gm_head_01,
+        lwa_gm_code       TYPE bapi2017_gm_code,
+        lv_mblnr          TYPE mblnr,
+        lv_mjahr          TYPE mjahr,
+
+        lwa_gm_item       TYPE bapi2017_gm_item_create,
+        lit_gm_item       TYPE STANDARD TABLE OF
+                                      bapi2017_gm_item_create,
+
+        lit_ret           TYPE bapiret2_t,
+        lwa_ret           TYPE bapiret2.                    "++DZ0003
+
+  FIELD-SYMBOLS: <lfs_liq_trans>   TYPE  zmmtt_liq_transp,
+                 <lfs_liq_trans1>  TYPE  zmmtt_liq_transp,
+                 <lfs_tdlnr_werks> TYPE  lty_tdlnr_werks,
+                 <lfs_po_item>     TYPE  bapiekpo,
+                 <lfs_trans_ic>    TYPE  lty_tdlnr_werks.
+
+  DATA:	lit_liq TYPE ty_t_liqtrans,                         "++DZ0005
+        lwa_liq TYPE zmmtt_liq_transp.                      "++DZ0005
+
+  lit_liq_trans_sel[] = fp_liq_trans_sel[].
+
+  LOOP AT lit_liq_trans_sel ASSIGNING <lfs_liq_trans>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans1>
+                WITH KEY  bukrs = <lfs_liq_trans>-bukrs
+                          tknum = <lfs_liq_trans>-tknum
+                          shtyp = <lfs_liq_trans>-shtyp
+                          tplst = <lfs_liq_trans>-tplst
+                          BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      IF <lfs_liq_trans1>-ebeln_ic IS INITIAL
+        OR
+        <lfs_liq_trans1>-mblnr_ic IS NOT INITIAL.
+
+        CONTINUE.
+
+      ENDIF.
+
+      lwa_tdlnr_werks-ebeln = <lfs_liq_trans1>-ebeln_ic.
+      lwa_tdlnr_werks-bukrs = <lfs_liq_trans>-bukrs.
+      lwa_tdlnr_werks-tknum = <lfs_liq_trans>-tknum.
+      lwa_tdlnr_werks-shtyp = <lfs_liq_trans>-shtyp.
+      lwa_tdlnr_werks-tplst = <lfs_liq_trans>-tplst.
+      lwa_tdlnr_werks-daten = <lfs_liq_trans>-daten.
+
+      APPEND lwa_tdlnr_werks TO lit_tdlnr_werks.
+
+    ENDIF.
+
+  ENDLOOP.
+
+  SORT lit_tdlnr_werks BY ebeln.
+
+  LOOP AT lit_tdlnr_werks ASSIGNING <lfs_tdlnr_werks>.
+
+    lwa_tdlnr_werks = <lfs_tdlnr_werks>.
+    APPEND lwa_tdlnr_werks TO lit_trans_ic.
+
+    AT END OF ebeln.
+
+      CALL FUNCTION 'BAPI_PO_GETDETAIL'
+        EXPORTING
+          purchaseorder = lwa_tdlnr_werks-ebeln
+          items         = 'X'
+        IMPORTING
+          po_header     = lwa_po_hdr
+          po_address    = lwa_po_add
+        TABLES
+          po_items      = lit_po_item.
+
+      lwa_gm_hdr-pstng_date = v_date_popup.
+      lwa_gm_hdr-doc_date   = v_date_popup.
+      lwa_gm_hdr-ref_doc_no = lwa_tdlnr_werks-ebeln.
+
+      lwa_gm_code-gm_code   = '01'.
+
+      LOOP AT lit_po_item ASSIGNING <lfs_po_item>.
+
+        lwa_gm_item-move_type = '101'.
+        lwa_gm_item-entry_qnt = <lfs_po_item>-quantity.
+        lwa_gm_item-entry_uom = <lfs_po_item>-unit.
+        lwa_gm_item-po_number = <lfs_po_item>-po_number.
+        lwa_gm_item-po_item   = <lfs_po_item>-po_item.
+        lwa_gm_item-no_more_gr  = 'X'.
+        lwa_gm_item-gr_rcpt     = <lfs_po_item>-po_number.
+        lwa_gm_item-mvt_ind     = 'B'.
+
+        APPEND lwa_gm_item TO lit_gm_item.
+
+      ENDLOOP.
+
+      CALL FUNCTION 'BAPI_GOODSMVT_CREATE'
+        EXPORTING
+          goodsmvt_header  = lwa_gm_hdr
+          goodsmvt_code    = lwa_gm_code
+        IMPORTING
+          materialdocument = lv_mblnr
+          matdocumentyear  = lv_mjahr
+        TABLES
+          goodsmvt_item    = lit_gm_item
+          return           = lit_ret.
+
+      IF lv_mblnr IS NOT INITIAL.
+
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          EXPORTING
+            wait = 'X'.
+        WAIT UP TO v_seg SECONDS.
+*** Begin of change by DZ0003 ***********************
+        CLEAR lwa_ret.
+        lwa_ret-type        = 'S'.
+        lwa_ret-id          = 'ZMM'.
+        lwa_ret-number      = '175'.
+        lwa_ret-message_v1  = lv_mblnr.
+        APPEND lwa_ret TO lit_ret.
+*** End of change by DZ0003 ***********************
+        LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+          READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              WITH KEY  bukrs = <lfs_trans_ic>-bukrs
+                                        tknum = <lfs_trans_ic>-tknum
+                                        shtyp = <lfs_trans_ic>-shtyp
+                                        tplst = <lfs_trans_ic>-tplst
+                                          BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+
+            <lfs_liq_trans>-mblnr_ic  = lv_mblnr.
+            <lfs_liq_trans>-mjahr_ic  = lv_mjahr.
+            <lfs_liq_trans>-bukrs_ic  = <lfs_trans_ic>-bukrs.
+            <lfs_liq_trans>-icon        = '@08@'.
+
+            lwa_liq = <lfs_liq_trans>.                      "++DZ0005
+            APPEND lwa_liq TO lit_liq.                      "++DZ0005
+
+          ENDIF.
+
+        ENDLOOP.
+
+      ELSE.
+
+        LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+          READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+            WITH KEY
+            bukrs = <lfs_trans_ic>-bukrs
+            tknum = <lfs_trans_ic>-tknum
+            shtyp = <lfs_trans_ic>-shtyp
+            tplst = <lfs_trans_ic>-tplst
+            BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+
+            <lfs_liq_trans>-icon        = '@0A@'.
+
+            lwa_liq = <lfs_liq_trans>.                      "++DZ0005
+            APPEND lwa_liq TO lit_liq.                      "++DZ0005
+
+          ENDIF.
+
+        ENDLOOP.
+
+        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+      ENDIF.
+
+      APPEND LINES OF lit_ret TO fp_ret.
+
+      CLEAR:  lv_mblnr, lv_mjahr, lwa_gm_hdr, lwa_gm_code,
+              lwa_gm_item, lwa_tdlnr_werks.
+
+      REFRESH:  lit_gm_item, lit_ret, lit_trans_ic.
+
+    ENDAT.
+
+  ENDLOOP.
+***  Begin of change by DZ0005 **********************
+  IF lit_liq[] IS NOT INITIAL.
+
+    MODIFY zmmtt_liq_transp FROM TABLE lit_liq.
+    COMMIT WORK.
+
+  ENDIF.
+***  End of change by DZ0005 **********************
+ENDFORM.                    " F_CREATE_MATDOC_IC
+*&---------------------------------------------------------------------*
+*&      Form  F_CREATE_SALESDOC_IC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_LIQ_TRANS  text
+*      <--P_FP_LIQ_TRANSP  text
+*      <--P_FP_RET  text
+*----------------------------------------------------------------------*
+FORM f_create_salesdoc_ic USING  fp_liq_trans_sel  TYPE ty_t_liqtrans
+                       CHANGING fp_liq_transp     TYPE ty_t_liqtrans
+                                fp_ret            TYPE bapiret2_t.
+
+  TYPES: BEGIN OF lty_tdlnr_werks,
+           ebeln TYPE  ebeln,
+           bukrs TYPE  bukrs,
+           tknum TYPE  tknum,
+           shtyp TYPE  shtyp,
+           tplst TYPE  tplst,
+           daten TYPE  datend,
+           werks TYPE  werks_d,
+         END           OF    lty_tdlnr_werks.
+
+  DATA: lit_tdlnr_werks   TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lit_trans_ic      TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lwa_tdlnr_werks   TYPE lty_tdlnr_werks,
+        lit_liq_trans_sel TYPE ty_t_liqtrans,
+
+
+        lwa_po_hdr        TYPE bapiekkol,
+        lwa_po_add        TYPE bapiaddress,
+        lit_po_item       TYPE STANDARD TABLE OF bapiekpo,
+
+        lwa_so_hdr        TYPE bapisdhd1,
+        lwa_so_hdrx       TYPE bapisdhd1x,
+        lit_item_so       TYPE STANDARD TABLE OF bapisditm,
+        lit_partner       TYPE STANDARD TABLE OF bapiparnr,
+        lit_schdl         TYPE STANDARD TABLE OF bapischdl,
+        lit_cond          TYPE STANDARD TABLE OF bapicond,
+
+        lwa_item_so       TYPE bapisditm,
+        lwa_partner       TYPE bapiparnr,
+        lwa_schdl         TYPE bapischdl,
+        lwa_cond          TYPE bapicond,
+        lv_vbeln_va       TYPE vbeln_va,
+        lv_kschl          TYPE kscha,
+        lit_ret           TYPE bapiret2_t,
+        lit_const         TYPE ty_t_ztconst,
+        lv_werks          TYPE werks_d.                     "++DZ0002
+
+  FIELD-SYMBOLS: <lfs_liq_trans>   TYPE  zmmtt_liq_transp,
+                 <lfs_liq_trans1>  TYPE  zmmtt_liq_transp,
+                 <lfs_tdlnr_werks> TYPE  lty_tdlnr_werks,
+                 <lfs_po_item>     TYPE  bapiekpo,
+                 <lfs_trans_ic>    TYPE  lty_tdlnr_werks,
+                 <lfs_const>       TYPE  ztconstantes,
+                 <lfs_sd_trans>    TYPE  ty_sd_trans,
+                 <lfs_cesp>        TYPE  ty_cesp.
+
+  DATA:	lit_liq TYPE ty_t_liqtrans,                         "++DZ0005
+        lwa_liq TYPE zmmtt_liq_transp.                      "++DZ0005
+
+  lit_liq_trans_sel[] = fp_liq_trans_sel[].
+
+  LOOP AT lit_liq_trans_sel ASSIGNING <lfs_liq_trans>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans1>
+                WITH KEY  bukrs = <lfs_liq_trans>-bukrs
+                          tknum = <lfs_liq_trans>-tknum
+                          shtyp = <lfs_liq_trans>-shtyp
+                          tplst = <lfs_liq_trans>-tplst
+                          BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      IF <lfs_liq_trans1>-ebeln_ic IS INITIAL OR
+        <lfs_liq_trans1>-mblnr_ic IS INITIAL OR
+        <lfs_liq_trans1>-salesord_ic IS NOT INITIAL.
+
+        CONTINUE.
+
+      ENDIF.
+*** Begin of change by DZ0002 ************************
+      lv_werks = <lfs_liq_trans>-tplst.
+
+      PERFORM f_get_cbase USING it_r_shtyps
+                                it_transp_cbase
+                                <lfs_liq_trans>-tknum
+                                <lfs_liq_trans>-shtyp
+                                <lfs_liq_trans>-tplst
+                                CHANGING lv_werks.
+*** End of change by DZ0002 ************************
+      READ TABLE it_cesp ASSIGNING <lfs_cesp>
+                      WITH KEY  bukrs = <lfs_liq_trans>-bukrs
+                                tplst = lv_werks
+                                "<lfs_liq_trans>-tplst --DZ0002
+                                shtyp = <lfs_liq_trans>-shtyp
+                                tipo  = 'T1'
+                                BINARY SEARCH.
+
+      IF sy-subrc IS INITIAL.
+
+        lwa_tdlnr_werks-ebeln = <lfs_liq_trans1>-ebeln_ic.
+        lwa_tdlnr_werks-bukrs = <lfs_liq_trans>-bukrs.
+        lwa_tdlnr_werks-tknum = <lfs_liq_trans>-tknum.
+        lwa_tdlnr_werks-shtyp = <lfs_liq_trans>-shtyp.
+        lwa_tdlnr_werks-tplst = <lfs_liq_trans>-tplst.
+        lwa_tdlnr_werks-daten = <lfs_liq_trans>-daten.
+        lwa_tdlnr_werks-werks = <lfs_cesp>-werks_base.
+
+      ENDIF.
+
+      APPEND lwa_tdlnr_werks TO lit_tdlnr_werks.
+
+    ENDIF.
+
+  ENDLOOP.
+
+  lit_const[] = it_ztconst[].
+  SORT lit_const BY fieldname grpname.
+
+  READ TABLE lit_const ASSIGNING <lfs_const>
+                      WITH KEY  fieldname = 'COND'
+                                grpname   = 'SALES_ORD'
+                                BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    lv_kschl = <lfs_const>-line_low.
+  ENDIF.
+
+  SORT lit_tdlnr_werks BY ebeln.
+
+  LOOP AT lit_tdlnr_werks ASSIGNING <lfs_tdlnr_werks>.
+
+    lwa_tdlnr_werks = <lfs_tdlnr_werks>.
+    APPEND lwa_tdlnr_werks TO lit_trans_ic.
+
+    AT END OF ebeln.
+
+      READ TABLE it_sd_trans ASSIGNING <lfs_sd_trans>
+                              WITH KEY  bukrs = lwa_tdlnr_werks-bukrs
+                                        tipo  = 'T1'
+                                        alq   = ''
+                                        BINARY SEARCH.
+      IF sy-subrc IS INITIAL.
+
+        CALL FUNCTION 'BAPI_PO_GETDETAIL'
+          EXPORTING
+            purchaseorder = lwa_tdlnr_werks-ebeln
+            items         = 'X'
+          IMPORTING
+            po_header     = lwa_po_hdr
+            po_address    = lwa_po_add
+          TABLES
+            po_items      = lit_po_item.
+
+
+        LOOP AT lit_po_item ASSIGNING <lfs_po_item>.
+
+          READ TABLE it_cesp ASSIGNING <lfs_cesp>
+                WITH KEY  bukrs = lwa_tdlnr_werks-bukrs
+                          tplst = <lfs_po_item>-plant
+                          shtyp = lwa_tdlnr_werks-shtyp
+                          tipo  = 'T1'
+                          BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+            lwa_item_so-plant       = <lfs_cesp>-werks_base.
+          ENDIF.
+          lwa_item_so-itm_number  = <lfs_po_item>-po_item.
+          lwa_item_so-material    = <lfs_po_item>-material.
+          " <lfs_sd_trans>-matnr.--DZ0005
+
+          lwa_item_so-target_qty  = <lfs_po_item>-quantity.
+          lwa_item_so-target_qu   = <lfs_po_item>-unit.
+          lwa_item_so-sales_unit  = <lfs_po_item>-unit.
+          lwa_item_so-short_text  = <lfs_po_item>-short_text. "++DZ0003
+
+          APPEND lwa_item_so TO lit_item_so.
+
+          lwa_schdl-itm_number  = lwa_item_so-itm_number.
+          lwa_schdl-req_qty     = lwa_item_so-target_qty.
+
+          APPEND lwa_schdl TO lit_schdl.
+
+          IF lv_kschl IS NOT INITIAL.
+            lwa_cond-itm_number   = lwa_item_so-itm_number.
+            lwa_cond-cond_type    = lv_kschl.
+            lwa_cond-cond_value   = <lfs_po_item>-net_value / 10.
+            APPEND lwa_cond TO lit_cond.
+          ENDIF.
+
+
+        ENDLOOP.
+
+        lwa_partner-partn_role = 'AG'.
+*** Begin of change by DZ0003 ************************
+*        CONCATENATE 'I' lwa_tdlnr_werks-bukrs
+*        INTO lwa_partner-partn_numb.
+        lwa_partner-partn_numb  = <lfs_sd_trans>-kunnr.
+*** End of change by DZ0003 ************************
+        APPEND lwa_partner TO lit_partner.
+
+* Crea Pedido.
+
+        lwa_so_hdr-doc_type   = <lfs_sd_trans>-auart.
+        lwa_so_hdr-sales_org  = <lfs_sd_trans>-vkorg.
+        lwa_so_hdr-distr_chan = <lfs_sd_trans>-vtweg.
+        lwa_so_hdr-division   = <lfs_sd_trans>-spart.
+        lwa_so_hdr-req_date_h = v_date_popup.
+        lwa_so_hdr-purch_date = v_date_popup.
+        lwa_so_hdr-purch_no_c = lwa_tdlnr_werks-ebeln.
+
+        lwa_so_hdrx-doc_type   = 'X'.
+        lwa_so_hdrx-sales_org  = 'X'.
+        lwa_so_hdrx-distr_chan = 'X'.
+        lwa_so_hdrx-division   = 'X'.
+        lwa_so_hdrx-req_date_h = 'X'.
+        lwa_so_hdrx-purch_date = 'X'.
+        lwa_so_hdrx-purch_no_c = 'X'.
+
+        CALL FUNCTION 'BAPI_SALESORDER_CREATEFROMDAT2'
+          EXPORTING
+            order_header_in     = lwa_so_hdr
+            order_header_inx    = lwa_so_hdrx
+          IMPORTING
+            salesdocument       = lv_vbeln_va
+          TABLES
+            return              = lit_ret
+            order_items_in      = lit_item_so
+            order_partners      = lit_partner
+            order_schedules_in  = lit_schdl
+            order_conditions_in = lit_cond.
+
+        IF lv_vbeln_va IS NOT INITIAL.
+
+          CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+            EXPORTING
+              wait = 'X'.
+          WAIT UP TO v_seg SECONDS.
+          LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+            READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                                WITH KEY  bukrs = <lfs_trans_ic>-bukrs
+                                          tknum = <lfs_trans_ic>-tknum
+                                          shtyp = <lfs_trans_ic>-shtyp
+                                          tplst = <lfs_trans_ic>-tplst
+                                            BINARY SEARCH.
+
+            IF sy-subrc IS INITIAL.
+
+              <lfs_liq_trans>-salesord_ic  = lv_vbeln_va.
+              <lfs_liq_trans>-icon        = '@08@'.
+
+              lwa_liq = <lfs_liq_trans>.                    "++DZ0005
+              APPEND lwa_liq TO lit_liq.                    "++DZ0005
+
+            ENDIF.
+
+          ENDLOOP.
+
+        ELSE.
+
+          LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+            READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+              WITH KEY
+              bukrs = <lfs_trans_ic>-bukrs
+              tknum = <lfs_trans_ic>-tknum
+              shtyp = <lfs_trans_ic>-shtyp
+              tplst = <lfs_trans_ic>-tplst
+              BINARY SEARCH.
+
+            IF sy-subrc IS INITIAL.
+
+              <lfs_liq_trans>-icon        = '@0A@'.
+
+              lwa_liq = <lfs_liq_trans>.                    "++DZ0005
+              APPEND lwa_liq TO lit_liq.                    "++DZ0005
+
+            ENDIF.
+
+          ENDLOOP.
+
+          CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+        ENDIF.
+
+        APPEND LINES OF lit_ret TO fp_ret.
+
+        CLEAR:  lv_vbeln_va, lwa_so_hdr, lwa_so_hdrx,
+                lwa_item_so, lwa_partner, lwa_tdlnr_werks, lwa_schdl,
+                lwa_cond.
+
+        REFRESH:  lit_item_so, lit_ret, lit_partner, lit_schdl,
+                  lit_cond, lit_trans_ic.
+
+      ENDIF.
+
+    ENDAT.
+
+  ENDLOOP.
+***  Begin of change by DZ0005 **********************
+  IF lit_liq[] IS NOT INITIAL.
+
+    MODIFY zmmtt_liq_transp FROM TABLE lit_liq.
+    COMMIT WORK.
+
+  ENDIF.
+***  End of change by DZ0005 **********************
+ENDFORM.                    " F_CREATE_SALESDOC_IC
+*&---------------------------------------------------------------------*
+*&      Form  F_CREATE_INVOICE_IC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_LIQ_TRANS  text
+*      <--P_FP_LIQ_TRANSP  text
+*      <--P_FP_RET  text
+*----------------------------------------------------------------------*
+FORM f_create_invoice_ic  USING  fp_liq_trans_sel  TYPE ty_t_liqtrans
+                       CHANGING fp_liq_transp     TYPE ty_t_liqtrans
+                                fp_ret            TYPE bapiret2_t.
+
+  TYPES: BEGIN OF lty_tdlnr_werks,
+           vbeln TYPE  vbeln_va,
+           bukrs TYPE  bukrs,
+           tknum TYPE  tknum,
+           shtyp TYPE  shtyp,
+           tplst TYPE  tplst,
+           daten TYPE  datend,
+         END           OF    lty_tdlnr_werks.
+
+  DATA: lit_tdlnr_werks   TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lit_trans_ic      TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lwa_tdlnr_werks   TYPE lty_tdlnr_werks,
+        lit_liq_trans_sel TYPE ty_t_liqtrans,
+
+        lv_vbeln_vf       TYPE vbeln_vf,
+        lwa_bill          TYPE bapivbrk,
+        lit_bill          TYPE STANDARD TABLE OF bapivbrk,
+        lit_success       TYPE STANDARD TABLE OF bapivbrksuccess,
+        lit_ret           TYPE bapiret2_t.
+
+  FIELD-SYMBOLS: <lfs_liq_trans>   TYPE  zmmtt_liq_transp,
+                 <lfs_liq_trans1>  TYPE  zmmtt_liq_transp,
+                 <lfs_tdlnr_werks> TYPE  lty_tdlnr_werks,
+                 <lfs_trans_ic>    TYPE  lty_tdlnr_werks,
+                 <lfs_success>     TYPE  bapivbrksuccess.
+
+  DATA:	lit_liq TYPE ty_t_liqtrans,                         "++DZ0005
+        lwa_liq TYPE zmmtt_liq_transp.                      "++DZ0005
+
+  lit_liq_trans_sel[] = fp_liq_trans_sel[].
+
+  LOOP AT lit_liq_trans_sel ASSIGNING <lfs_liq_trans>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans1>
+                WITH KEY  bukrs = <lfs_liq_trans>-bukrs
+                          tknum = <lfs_liq_trans>-tknum
+                          shtyp = <lfs_liq_trans>-shtyp
+                          tplst = <lfs_liq_trans>-tplst
+                          BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      IF <lfs_liq_trans1>-salesord_ic IS INITIAL OR
+        <lfs_liq_trans1>-factura_ic  IS NOT INITIAL.
+
+        CONTINUE.
+
+      ENDIF.
+
+    ENDIF.
+
+    lwa_tdlnr_werks-vbeln = <lfs_liq_trans1>-salesord_ic.
+    lwa_tdlnr_werks-bukrs = <lfs_liq_trans>-bukrs.
+    lwa_tdlnr_werks-tknum = <lfs_liq_trans>-tknum.
+    lwa_tdlnr_werks-shtyp = <lfs_liq_trans>-shtyp.
+    lwa_tdlnr_werks-tplst = <lfs_liq_trans>-tplst.
+    lwa_tdlnr_werks-daten = <lfs_liq_trans>-daten.
+
+    APPEND lwa_tdlnr_werks TO lit_tdlnr_werks.
+
+  ENDLOOP.
+
+  SORT lit_tdlnr_werks BY vbeln.
+
+  LOOP AT lit_tdlnr_werks ASSIGNING <lfs_tdlnr_werks>.
+
+    lwa_tdlnr_werks = <lfs_tdlnr_werks>.
+    APPEND lwa_tdlnr_werks TO lit_trans_ic.
+
+    AT END OF vbeln.
+
+      lwa_bill-ref_doc     = lwa_tdlnr_werks-vbeln.
+      lwa_bill-ref_doc_ca  = 'C'.
+      APPEND lwa_bill TO lit_bill.
+
+      CALL FUNCTION 'BAPI_BILLINGDOC_CREATEMULTIPLE'
+        EXPORTING
+          posting       = 'C'
+        TABLES
+          billingdatain = lit_bill
+          return        = lit_ret
+          success       = lit_success.
+
+      READ TABLE lit_success ASSIGNING <lfs_success> INDEX 1.
+      IF sy-subrc IS INITIAL.
+
+        lv_vbeln_vf = <lfs_success>-bill_doc.
+
+      ENDIF.
+
+      IF lv_vbeln_vf IS NOT INITIAL.
+
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          EXPORTING
+            wait = 'X'.
+        WAIT UP TO v_seg SECONDS.
+        LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+          READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              WITH KEY  bukrs = <lfs_trans_ic>-bukrs
+                                        tknum = <lfs_trans_ic>-tknum
+                                        shtyp = <lfs_trans_ic>-shtyp
+                                        tplst = <lfs_trans_ic>-tplst
+                                          BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+
+            <lfs_liq_trans>-factura_ic  = lv_vbeln_vf.
+            <lfs_liq_trans>-nombre_ic   = sy-uname.
+            <lfs_liq_trans>-fecha_ic    = sy-datum.
+            <lfs_liq_trans>-hora_ic     = sy-uzeit.
+            "<lfs_liq_trans>-stat_ic     = '2'. --DZ0003
+            "<lfs_liq_trans>-stat_tdlnr  = '3'. --DZ0002
+            <lfs_liq_trans>-icon        = '@08@'.
+
+            lwa_liq = <lfs_liq_trans>.                      "++DZ0005
+            APPEND lwa_liq TO lit_liq.                      "++DZ0005
+
+          ENDIF.
+
+        ENDLOOP.
+
+      ELSE.
+
+        LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+          READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              WITH KEY  bukrs = <lfs_trans_ic>-bukrs
+                                        tknum = <lfs_trans_ic>-tknum
+                                        shtyp = <lfs_trans_ic>-shtyp
+                                        tplst = <lfs_trans_ic>-tplst
+                                          BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+
+            <lfs_liq_trans>-icon        = '@0A@'.
+
+            lwa_liq = <lfs_liq_trans>.                      "++DZ0005
+            APPEND lwa_liq TO lit_liq.                      "++DZ0005
+
+          ENDIF.
+
+        ENDLOOP.
+
+        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+      ENDIF.
+
+      APPEND LINES OF lit_ret TO fp_ret.
+
+      CLEAR:  lv_vbeln_vf, lwa_bill.
+
+      REFRESH:  lit_bill, lit_ret, lit_success, lit_trans_ic.
+
+
+    ENDAT.
+
+  ENDLOOP.
+
+***  Begin of change by DZ0005 **********************
+  IF lit_liq[] IS NOT INITIAL.
+
+    MODIFY zmmtt_liq_transp FROM TABLE lit_liq.
+    COMMIT WORK.
+
+  ENDIF.
+***  End of change by DZ0005 **********************
+ENDFORM.                    " F_CREATE_INVOICE_IC
+*&---------------------------------------------------------------------*
+*&      Form  F_LIQ_ALQ
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_ROWS  text
+*      <--P_IT_LIQ_TRANSP  text
+*      <--P_LIT_RET  text
+*----------------------------------------------------------------------*
+FORM f_liq_alq  USING fp_rows       TYPE lvc_t_row
+                      CHANGING fp_liq_transp TYPE ty_t_liqtrans
+                                fp_ret        TYPE bapiret2_t.
+
+  DATA: lit_liq_trans TYPE ty_t_liqtrans,
+        lwa_liq_trans TYPE zmmtt_liq_transp.
+
+  FIELD-SYMBOLS: <lfs_row>       TYPE  lvc_s_row,
+                 <lfs_liq_trans> TYPE  zmmtt_liq_transp.
+
+  LOOP AT fp_rows ASSIGNING <lfs_row>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              INDEX <lfs_row>-index.
+
+    IF sy-subrc IS INITIAL.
+
+      IF <lfs_liq_trans>-tarf_remolq_real_alq IS INITIAL.
+
+        CONTINUE.
+
+      ENDIF.
+
+      MOVE <lfs_liq_trans> TO lwa_liq_trans.
+      APPEND lwa_liq_trans TO lit_liq_trans.
+
+    ENDIF.
+
+  ENDLOOP.
+
+  IF lit_liq_trans IS NOT INITIAL.
+*** Step 4 Creation of the Corresponding Sales Document
+    PERFORM f_create_so_alq USING     lit_liq_trans
+                            CHANGING  fp_liq_transp
+                                      fp_ret.
+
+*** Step 5 Creation of the Corresponding Sales Document
+    PERFORM f_create_invoice_alq  USING lit_liq_trans
+                                  CHANGING fp_liq_transp
+                                          fp_ret.
+  ELSE.
+
+    MESSAGE i017(zmm) WITH TEXT-d03.
+    EXIT.
+
+  ENDIF.
+
+ENDFORM.                    " F_LIQ_ALQ
+*&---------------------------------------------------------------------*
+*&      Form  F_CREATE_SO_ALQ
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_LIQ_TRANS  text
+*      <--P_FP_LIQ_TRANSP  text
+*      <--P_FP_RET  text
+*----------------------------------------------------------------------*
+FORM f_create_so_alq  USING  fp_liq_trans_sel  TYPE ty_t_liqtrans
+                       CHANGING fp_liq_transp     TYPE ty_t_liqtrans
+                                fp_ret            TYPE bapiret2_t.
+
+  TYPES: BEGIN OF lty_tdlnr_werks,
+           werks     TYPE  zmmed_werks_base,
+           placa     TYPE  /dsd/rp_truck,
+           kunnr_alq TYPE  zmmed_kunnr_remolq,
+           daten     TYPE  datend,
+           bukrs     TYPE  bukrs,
+           tknum     TYPE  tknum,
+           shtyp     TYPE  shtyp,
+           tplst     TYPE  tplst,
+           tarf_alq  TYPE  zmmed_tarf_remolq,
+         END           OF    lty_tdlnr_werks.
+
+  DATA: lit_tdlnr_werks   TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lit_trans_ic      TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lwa_tdlnr_werks   TYPE lty_tdlnr_werks,
+        lit_liq_trans_sel TYPE ty_t_liqtrans,
+
+
+        lwa_po_hdr        TYPE bapiekkol,
+        lwa_po_add        TYPE bapiaddress,
+        lit_po_item       TYPE STANDARD TABLE OF bapiekpo,
+
+        lwa_so_hdr        TYPE bapisdhd1,
+        lwa_so_hdrx       TYPE bapisdhd1x,
+        lit_item_so       TYPE STANDARD TABLE OF bapisditm,
+        lit_partner       TYPE STANDARD TABLE OF bapiparnr,
+        lit_schdl         TYPE STANDARD TABLE OF bapischdl,
+        lit_cond          TYPE STANDARD TABLE OF bapicond,
+
+        lwa_item_so       TYPE bapisditm,
+        lwa_partner       TYPE bapiparnr,
+        lwa_schdl         TYPE bapischdl,
+        lwa_cond          TYPE bapicond,
+        lv_vbeln_va       TYPE vbeln_va,
+        lv_kschl          TYPE kscha,
+        lit_ret           TYPE bapiret2_t,
+        lit_const         TYPE ty_t_ztconst,
+        lv_tarifa         TYPE  zmmed_tar_tdlnr.
+
+  FIELD-SYMBOLS: <lfs_liq_trans>   TYPE  zmmtt_liq_transp,
+                 <lfs_liq_trans1>  TYPE  zmmtt_liq_transp,
+                 <lfs_tdlnr_werks> TYPE  lty_tdlnr_werks,
+                 <lfs_po_item>     TYPE  bapiekpo,
+                 <lfs_trans_ic>    TYPE  lty_tdlnr_werks,
+                 <lfs_const>       TYPE  ztconstantes,
+                 <lfs_sd_trans>    TYPE  ty_sd_trans.
+
+  DATA:	lit_liq TYPE ty_t_liqtrans,                         "++DZ0005
+        lwa_liq TYPE zmmtt_liq_transp.                      "++DZ0005
+
+  lit_liq_trans_sel[] = fp_liq_trans_sel[].
+  LOOP AT lit_liq_trans_sel ASSIGNING <lfs_liq_trans>.
+
+    IF <lfs_liq_trans>-salesord_alq IS NOT INITIAL.
+
+      CONTINUE.
+
+    ENDIF.
+
+    lwa_tdlnr_werks-werks = <lfs_liq_trans>-werks_ter.
+    lwa_tdlnr_werks-placa = <lfs_liq_trans>-placa.
+    lwa_tdlnr_werks-daten = <lfs_liq_trans>-daten.
+    lwa_tdlnr_werks-bukrs = <lfs_liq_trans>-bukrs.
+    lwa_tdlnr_werks-tknum = <lfs_liq_trans>-tknum.
+    lwa_tdlnr_werks-shtyp = <lfs_liq_trans>-shtyp.
+    lwa_tdlnr_werks-tplst = <lfs_liq_trans>-tplst.
+    lwa_tdlnr_werks-kunnr_alq = <lfs_liq_trans>-kunnr_remolq_alq.
+    lwa_tdlnr_werks-tarf_alq  = <lfs_liq_trans>-tarf_remolq_real_alq.
+
+    APPEND lwa_tdlnr_werks TO lit_tdlnr_werks.
+
+  ENDLOOP.
+
+  lit_const[] = it_ztconst[].
+  SORT lit_const BY fieldname grpname.
+
+  READ TABLE lit_const ASSIGNING <lfs_const>
+                      WITH KEY  fieldname = 'COND'
+                                grpname   = 'SALES_ORD'
+                                BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    lv_kschl = <lfs_const>-line_low.
+  ENDIF.
+
+  SORT lit_tdlnr_werks BY werks placa kunnr_alq.
+
+  LOOP AT lit_tdlnr_werks ASSIGNING <lfs_tdlnr_werks>.
+
+    lwa_tdlnr_werks = <lfs_tdlnr_werks>.
+    APPEND lwa_tdlnr_werks TO lit_trans_ic.
+
+    lv_tarifa = lv_tarifa + lwa_tdlnr_werks-tarf_alq.
+
+    AT END OF kunnr_alq.
+
+      READ TABLE it_sd_trans ASSIGNING <lfs_sd_trans>
+                              WITH KEY  bukrs = lwa_tdlnr_werks-bukrs
+                                        tipo  = 'T1'
+                                        alq   = 'X'
+                                        BINARY SEARCH.
+      IF sy-subrc IS INITIAL.
+
+        lwa_item_so-itm_number  = '10'.
+        lwa_item_so-material    = <lfs_sd_trans>-matnr.
+        lwa_item_so-plant       = lwa_tdlnr_werks-werks.
+        lwa_item_so-target_qty  = '1'.
+
+        APPEND lwa_item_so TO lit_item_so.
+
+        lwa_schdl-itm_number  = lwa_item_so-itm_number.
+        lwa_schdl-req_qty     = lwa_item_so-target_qty.
+
+        APPEND lwa_schdl TO lit_schdl.
+        IF lv_kschl IS NOT INITIAL.
+          lwa_cond-itm_number   = lwa_item_so-itm_number.
+          lwa_cond-cond_type    = lv_kschl.
+          lwa_cond-cond_value   = lv_tarifa / 10.
+          APPEND lwa_cond TO lit_cond.
+        ENDIF.
+
+        lwa_partner-partn_role = 'AG'.
+        lwa_partner-partn_numb  = lwa_tdlnr_werks-kunnr_alq.
+        APPEND lwa_partner TO lit_partner.
+
+* Crea Pedido.
+
+        lwa_so_hdr-doc_type   = <lfs_sd_trans>-auart.
+        lwa_so_hdr-sales_org  = <lfs_sd_trans>-vkorg.
+        lwa_so_hdr-distr_chan = <lfs_sd_trans>-vtweg.
+        lwa_so_hdr-division   = <lfs_sd_trans>-spart.
+        lwa_so_hdr-req_date_h = v_date_popup.
+        lwa_so_hdr-purch_date = v_date_popup.
+        lwa_so_hdr-purch_no_c = TEXT-026.
+
+        lwa_so_hdrx-doc_type   = 'X'.
+        lwa_so_hdrx-sales_org  = 'X'.
+        lwa_so_hdrx-distr_chan = 'X'.
+        lwa_so_hdrx-division   = 'X'.
+        lwa_so_hdrx-req_date_h = 'X'.
+        lwa_so_hdrx-purch_date = 'X'.
+        lwa_so_hdrx-purch_no_c = 'X'.
+
+        CALL FUNCTION 'BAPI_SALESORDER_CREATEFROMDAT2'
+          EXPORTING
+            order_header_in     = lwa_so_hdr
+            order_header_inx    = lwa_so_hdrx
+          IMPORTING
+            salesdocument       = lv_vbeln_va
+          TABLES
+            return              = lit_ret
+            order_items_in      = lit_item_so
+            order_partners      = lit_partner
+            order_schedules_in  = lit_schdl
+            order_conditions_in = lit_cond.
+
+        IF lv_vbeln_va IS NOT INITIAL.
+
+          CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+            EXPORTING
+              wait = 'X'.
+          WAIT UP TO v_seg SECONDS.
+          LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+            READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                                WITH KEY  bukrs = <lfs_trans_ic>-bukrs
+                                          tknum = <lfs_trans_ic>-tknum
+                                          shtyp = <lfs_trans_ic>-shtyp
+                                          tplst = <lfs_trans_ic>-tplst
+                                            BINARY SEARCH.
+
+            IF sy-subrc IS INITIAL.
+
+              <lfs_liq_trans>-salesord_alq  = lv_vbeln_va.
+              <lfs_liq_trans>-icon  = '@08@'.
+
+              lwa_liq = <lfs_liq_trans>.                    "++DZ0005
+              APPEND lwa_liq TO lit_liq.                    "++DZ0005
+
+            ENDIF.
+
+          ENDLOOP.
+
+        ELSE.
+
+          LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+            READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                                WITH KEY  bukrs = <lfs_trans_ic>-bukrs
+                                          tknum = <lfs_trans_ic>-tknum
+                                          shtyp = <lfs_trans_ic>-shtyp
+                                          tplst = <lfs_trans_ic>-tplst
+                                            BINARY SEARCH.
+
+            IF sy-subrc IS INITIAL.
+
+              <lfs_liq_trans>-icon  = '@0A@'.
+
+              lwa_liq = <lfs_liq_trans>.                    "++DZ0005
+              APPEND lwa_liq TO lit_liq.                    "++DZ0005
+
+            ENDIF.
+
+          ENDLOOP.
+
+          CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+        ENDIF.
+
+        APPEND LINES OF lit_ret TO fp_ret.
+
+        CLEAR:  lv_tarifa, lv_vbeln_va, lwa_so_hdr, lwa_so_hdrx,
+                lwa_item_so, lwa_partner, lwa_tdlnr_werks, lwa_schdl,
+                lwa_cond.
+
+        REFRESH:  lit_item_so, lit_ret, lit_partner, lit_schdl,
+                  lit_cond, lit_trans_ic.
+
+      ENDIF.
+
+    ENDAT.
+
+  ENDLOOP.
+***  Begin of change by DZ0005 **********************
+  IF lit_liq[] IS NOT INITIAL.
+
+    MODIFY zmmtt_liq_transp FROM TABLE lit_liq.
+    COMMIT WORK.
+
+  ENDIF.
+***  End of change by DZ0005 **********************
+ENDFORM.                    " F_CREATE_SO_ALQ
+*&---------------------------------------------------------------------*
+*&      Form  F_GET_DATE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      <--P_V_DATE_POPUP  text
+*----------------------------------------------------------------------*
+FORM f_get_date  CHANGING fp_date TYPE d.
+*** Begin of change by DZ0004 *************************
+  DATA: lit_const TYPE ty_t_ztconst,
+        lv_date   TYPE datum.
+
+  FIELD-SYMBOLS <lfs_const> TYPE ztconstantes.
+
+  lit_const[] = it_ztconst[].
+  DELETE lit_const WHERE grpname NE 'DIAS_ATRAS'.
+*** End of change by DZ0004 *************************
+  CALL FUNCTION 'TR_POPUP_INPUT_DATE'
+    EXPORTING
+      iv_title               = TEXT-025
+    IMPORTING
+      ev_date                = fp_date
+    EXCEPTIONS
+      action_aborted_by_user = 1
+      value_not_changed      = 2
+      OTHERS                 = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+*** Begin of change by DZ0004 *************************
+
+  READ TABLE lit_const ASSIGNING <lfs_const> INDEX 1.
+  IF sy-subrc IS INITIAL.
+
+    lv_date = sy-datum - <lfs_const>-line_low.
+
+  ENDIF.
+
+  IF fp_date GT sy-datum.
+
+    MESSAGE e000(zdsd) WITH TEXT-d11.
+
+  ELSE.
+
+    IF lv_date IS NOT INITIAL.
+
+      IF fp_date LT lv_date.
+
+        MESSAGE e000(zdsd) WITH TEXT-d15 lv_date.
+
+      ENDIF.
+
+    ENDIF.
+
+  ENDIF.
+*** End of change by DZ0004 *************************
+
+ENDFORM.                    " F_GET_DATE
+*&---------------------------------------------------------------------*
+*&      Form  F_CREATE_INVOICE_ALQ
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_LIQ_TRANS  text
+*      <--P_FP_LIQ_TRANSP  text
+*      <--P_FP_RET  text
+*----------------------------------------------------------------------*
+FORM f_create_invoice_alq  USING  fp_liq_trans_sel  TYPE ty_t_liqtrans
+                       CHANGING fp_liq_transp     TYPE ty_t_liqtrans
+                                fp_ret            TYPE bapiret2_t.
+
+  TYPES: BEGIN OF lty_tdlnr_werks,
+           vbeln TYPE  vbeln_va,
+           bukrs TYPE  bukrs,
+           tknum TYPE  tknum,
+           shtyp TYPE  shtyp,
+           tplst TYPE  tplst,
+           daten TYPE  datend,
+         END           OF    lty_tdlnr_werks.
+
+  DATA: lit_tdlnr_werks   TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lit_trans_ic      TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lwa_tdlnr_werks   TYPE lty_tdlnr_werks,
+        lit_liq_trans_sel TYPE ty_t_liqtrans,
+
+        lv_vbeln_vf       TYPE vbeln_vf,
+        lwa_bill          TYPE bapivbrk,
+        lit_bill          TYPE STANDARD TABLE OF bapivbrk,
+        lit_success       TYPE STANDARD TABLE OF bapivbrksuccess,
+        lit_ret           TYPE bapiret2_t.
+
+  FIELD-SYMBOLS: <lfs_liq_trans>   TYPE  zmmtt_liq_transp,
+                 <lfs_liq_trans1>  TYPE  zmmtt_liq_transp,
+                 <lfs_tdlnr_werks> TYPE  lty_tdlnr_werks,
+                 <lfs_trans_ic>    TYPE  lty_tdlnr_werks,
+                 <lfs_success>     TYPE  bapivbrksuccess.
+
+  DATA:	lit_liq TYPE ty_t_liqtrans,                         "++DZ0005
+        lwa_liq TYPE zmmtt_liq_transp.                      "++DZ0005
+
+  lit_liq_trans_sel[] = fp_liq_trans_sel[].
+
+  LOOP AT lit_liq_trans_sel ASSIGNING <lfs_liq_trans>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans1>
+                WITH KEY  bukrs = <lfs_liq_trans>-bukrs
+                          tknum = <lfs_liq_trans>-tknum
+                          shtyp = <lfs_liq_trans>-shtyp
+                          tplst = <lfs_liq_trans>-tplst
+                          BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      IF <lfs_liq_trans1>-salesord_alq IS INITIAL OR
+        <lfs_liq_trans1>-factura_alq  IS NOT INITIAL.
+
+        CONTINUE.
+
+      ENDIF.
+
+    ENDIF.
+
+    lwa_tdlnr_werks-vbeln = <lfs_liq_trans1>-salesord_alq.
+    lwa_tdlnr_werks-bukrs = <lfs_liq_trans>-bukrs.
+    lwa_tdlnr_werks-tknum = <lfs_liq_trans>-tknum.
+    lwa_tdlnr_werks-shtyp = <lfs_liq_trans>-shtyp.
+    lwa_tdlnr_werks-tplst = <lfs_liq_trans>-tplst.
+    lwa_tdlnr_werks-daten = <lfs_liq_trans>-daten.
+
+    APPEND lwa_tdlnr_werks TO lit_tdlnr_werks.
+
+  ENDLOOP.
+
+  SORT lit_tdlnr_werks BY vbeln.
+
+  LOOP AT lit_tdlnr_werks ASSIGNING <lfs_tdlnr_werks>.
+
+    lwa_tdlnr_werks = <lfs_tdlnr_werks>.
+    APPEND lwa_tdlnr_werks TO lit_trans_ic.
+
+    AT END OF vbeln.
+
+      lwa_bill-ref_doc     = lwa_tdlnr_werks-vbeln.
+      lwa_bill-ref_doc_ca  = 'C'.
+      APPEND lwa_bill TO lit_bill.
+
+      CALL FUNCTION 'BAPI_BILLINGDOC_CREATEMULTIPLE'
+        EXPORTING
+          posting       = 'C'
+        TABLES
+          billingdatain = lit_bill
+          return        = lit_ret
+          success       = lit_success.
+
+      READ TABLE lit_success ASSIGNING <lfs_success> INDEX 1.
+      IF sy-subrc IS INITIAL.
+
+        lv_vbeln_vf = <lfs_success>-bill_doc.
+
+      ENDIF.
+
+      IF lv_vbeln_vf IS NOT INITIAL.
+
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          EXPORTING
+            wait = 'X'.
+        WAIT UP TO v_seg SECONDS.
+        LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+          READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              WITH KEY  bukrs = <lfs_trans_ic>-bukrs
+                                        tknum = <lfs_trans_ic>-tknum
+                                        shtyp = <lfs_trans_ic>-shtyp
+                                        tplst = <lfs_trans_ic>-tplst
+                                          BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+
+            <lfs_liq_trans>-factura_alq = lv_vbeln_vf.
+            "<lfs_liq_trans>-stat_tdlnr  = '3'.--DZ0003
+            <lfs_liq_trans>-icon  = '@08@'.
+
+            lwa_liq = <lfs_liq_trans>.                      "++DZ0005
+            APPEND lwa_liq TO lit_liq.                      "++DZ0005
+
+          ENDIF.
+
+        ENDLOOP.
+
+      ELSE.
+
+        LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+          READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              WITH KEY  bukrs = <lfs_trans_ic>-bukrs
+                                        tknum = <lfs_trans_ic>-tknum
+                                        shtyp = <lfs_trans_ic>-shtyp
+                                        tplst = <lfs_trans_ic>-tplst
+                                          BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+
+            <lfs_liq_trans>-icon  = '@0A@'.
+
+            lwa_liq = <lfs_liq_trans>.                      "++DZ0005
+            APPEND lwa_liq TO lit_liq.                      "++DZ0005
+
+          ENDIF.
+
+        ENDLOOP.
+
+        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+      ENDIF.
+
+      APPEND LINES OF lit_ret TO fp_ret.
+
+      CLEAR:  lv_vbeln_vf, lwa_bill.
+
+      REFRESH:  lit_bill, lit_ret, lit_success, lit_trans_ic.
+
+
+    ENDAT.
+
+  ENDLOOP.
+***  Begin of change by DZ0005 **********************
+  IF lit_liq[] IS NOT INITIAL.
+
+    MODIFY zmmtt_liq_transp FROM TABLE lit_liq.
+    COMMIT WORK.
+
+  ENDIF.
+***  End of change by DZ0005 **********************
+ENDFORM.                    " F_CREATE_INVOICE_ALQ
+*&---------------------------------------------------------------------*
+*&      Form  SAVE_SLG1
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_RET  text
+*      -->P_L_EXTNUMBER  text
+*      -->P_L_OBJECT  text
+*      -->P_L_SUBOBJECT  text
+*----------------------------------------------------------------------*
+FORM save_slg1  USING  t_return TYPE bapiret2_t
+                      l_extnumber  TYPE balnrext
+                      l_object     TYPE balobj_d
+                      l_subobject  TYPE balsubobj.
+
+
+  DATA l_log            TYPE bal_s_log.
+  DATA l_log_handle     TYPE balloghndl.
+  DATA l_msg            TYPE bal_s_msg.
+  DATA l_msg_was_logged TYPE boolean.
+  DATA l_message        TYPE c LENGTH 400.
+  DATA l_lenght         TYPE i.
+
+  DATA ti_log_handle TYPE bal_t_logh.
+
+  FIELD-SYMBOLS: <lfs_ret> TYPE bapiret2.
+
+  CHECK NOT t_return[] IS INITIAL.
+
+  CLEAR l_log_handle.
+  REFRESH ti_log_handle[].
+
+  l_log-extnumber = l_extnumber.
+  l_log-object = l_object.
+  l_log-subobject = l_subobject.
+  l_log-aldate = sy-datum.
+  l_log-altime = sy-uzeit.
+  l_log-aluser = sy-uname.
+  l_log-altcode = sy-tcode.
+  l_log-alprog = sy-repid.
+
+  CALL FUNCTION 'BAL_LOG_CREATE'
+    EXPORTING
+      i_s_log                 = l_log
+    IMPORTING
+      e_log_handle            = l_log_handle
+    EXCEPTIONS
+      log_header_inconsistent = 1
+      OTHERS                  = 2.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE 'I' NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    EXIT.
+  ENDIF.
+
+  LOOP AT t_return ASSIGNING <lfs_ret>.
+
+    CONCATENATE <lfs_ret>-message
+                <lfs_ret>-message_v1
+                <lfs_ret>-message_v2
+                <lfs_ret>-message_v3
+                <lfs_ret>-message_v4
+    INTO l_message.
+
+    CALL FUNCTION 'BAL_LOG_MSG_ADD_FREE_TEXT'
+      EXPORTING
+        i_log_handle     = l_log_handle
+        i_msgty          = <lfs_ret>-type
+        i_text           = l_message
+      IMPORTING
+        e_msg_was_logged = l_msg_was_logged
+      EXCEPTIONS
+        log_not_found    = 1
+        msg_inconsistent = 2
+        log_is_full      = 3
+        OTHERS           = 4.
+    IF sy-subrc <> 0.
+      MESSAGE ID sy-msgid TYPE 'I' NUMBER sy-msgno
+              WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+
+  ENDLOOP.
+
+  INSERT l_log_handle INTO TABLE ti_log_handle.
+
+  CALL FUNCTION 'BAL_DB_SAVE'
+    EXPORTING
+      i_save_all       = ''
+      i_t_log_handle   = ti_log_handle
+    EXCEPTIONS
+      log_not_found    = 1
+      save_not_allowed = 2
+      numbering_error  = 3
+      OTHERS           = 4.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE 'I' NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  CALL FUNCTION 'BAL_LOG_REFRESH'
+    EXPORTING
+      i_log_handle  = l_log_handle
+    EXCEPTIONS
+      log_not_found = 1
+      OTHERS        = 2.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+ENDFORM.                    " SAVE_SLG1
+*&---------------------------------------------------------------------*
+*&      Form  F_AUTH_BOTON
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_auth_boton .
+
+  CASE 'X'.
+
+    WHEN rb_pliq.
+
+      AUTHORITY-CHECK OBJECT 'ZMMOA_T1'
+      ID 'ZACTVT_T1' FIELD '01'.
+      IF sy-subrc IS NOT INITIAL.
+
+        MESSAGE e017(zmm) WITH TEXT-d04.
+
+      ENDIF.
+
+    WHEN rb_aprob.
+
+      AUTHORITY-CHECK OBJECT 'ZMMOA_T1'
+      ID 'ZACTVT_T1' FIELD '02'.
+
+      IF sy-subrc IS NOT INITIAL.
+
+        MESSAGE e017(zmm) WITH TEXT-d05.
+
+      ENDIF.
+
+    WHEN rb_liq.
+
+      CASE 'X'.
+
+        WHEN rb_ter.
+
+          AUTHORITY-CHECK OBJECT 'ZMMOA_T1'
+          ID 'ZACTVT_T1' FIELD '03'.
+
+          IF sy-subrc IS NOT INITIAL.
+
+            MESSAGE e017(zmm) WITH TEXT-d06.
+
+          ENDIF.
+
+        WHEN rb_alq.
+
+          AUTHORITY-CHECK OBJECT 'ZMMOA_T1'
+          ID 'ZACTVT_T1' FIELD '04'.
+
+          IF sy-subrc IS NOT INITIAL.
+
+            MESSAGE e017(zmm) WITH TEXT-d07.
+
+          ENDIF.
+
+        WHEN rb_ic.
+
+          AUTHORITY-CHECK OBJECT 'ZMMOA_T1'
+          ID 'ZACTVT_T1' FIELD '05'.
+
+          IF sy-subrc IS NOT INITIAL.
+
+            MESSAGE e017(zmm) WITH TEXT-d08.
+
+          ENDIF.
+
+*       "MX007608 07.07.2023 ADD <INI>
+          "Operaciones Intercompany OWENS
+        WHEN rb_ic_ow.
+
+          AUTHORITY-CHECK OBJECT 'ZMMOA_T1'
+          ID 'ZACTVT_T1' FIELD '05'.
+
+          IF sy-subrc IS NOT INITIAL.
+
+            MESSAGE e017(zmm) WITH TEXT-d08.
+
+          ENDIF.
+*       "MX007608 07.07.2023 ADD <FIN>
+
+        WHEN OTHERS.
+      ENDCASE.
+    WHEN OTHERS.
+  ENDCASE.
+
+ENDFORM.                    " F_AUTH_BOTON
+*&---------------------------------------------------------------------*
+*&      Form  F_REV_PRELIQ
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_ROWS  text
+*      <--P_IT_LIQ_TRANSP  text
+*----------------------------------------------------------------------*
+FORM f_rev_preliq USING     fp_rows       TYPE lvc_t_row
+                  CHANGING  fp_liq_transp TYPE ty_t_liqtrans.
+
+  DATA: lit_liq_transp TYPE ty_t_liqtrans.
+
+  FIELD-SYMBOLS: <lfs_row>       TYPE lvc_s_row,
+                 <lfs_liq_trans> TYPE zmmtt_liq_transp.
+
+
+  LOOP AT fp_rows ASSIGNING <lfs_row>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                                  INDEX <lfs_row>-index.
+
+    IF sy-subrc IS INITIAL.
+
+      <lfs_liq_trans>-stat_tdlnr  = '0'.
+
+      <lfs_liq_trans>-stat_ic     = '0'.
+
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.                    " F_REV_PRELIQ
+*&---------------------------------------------------------------------*
+*&      Form  F_CREAR_PARTE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_ROWS  text
+*      <--P_IT_LIQ_TRANSP  text
+*----------------------------------------------------------------------*
+FORM f_crear_parte  USING     fp_rows       TYPE lvc_t_row
+                    CHANGING  fp_liq_transp TYPE ty_t_liqtrans.
+
+  DATA: lit_liq   TYPE  ty_t_liqtrans,
+        lv_number TYPE  zmmed_nro_parte,
+        lit_const TYPE  ty_t_ztconst,
+        lv_pref   TYPE  char1.
+
+  CONSTANTS: lc_38         TYPE nrnr      VALUE '38',
+             lc_rv_transpo TYPE nrobj     VALUE 'RV_TRANSPO',
+             lc_quantity   TYPE nrquan    VALUE '00000000000000000001'.
+
+  FIELD-SYMBOLS: <lfs_row>       TYPE lvc_s_row,
+                 <lfs_liq_trans> TYPE zmmtt_liq_transp,
+                 <lfs_const>     TYPE ztconstantes.
+
+  DATA:	lit_liq1 TYPE ty_t_liqtrans,                        "++DZ0005
+        lwa_liq  TYPE zmmtt_liq_transp.                     "++DZ0005
+
+  LOOP AT fp_rows ASSIGNING <lfs_row>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              INDEX <lfs_row>-index.
+
+    IF sy-subrc IS INITIAL.
+
+      IF <lfs_liq_trans>-nro_parte IS INITIAL.
+
+        APPEND <lfs_liq_trans> TO lit_liq.
+
+      ENDIF.
+
+    ENDIF.
+
+  ENDLOOP.
+
+  IF NOT lit_liq[] IS INITIAL.                              "+@0002
+    "Buscar los valores de liquidacion de transporte
+    SELECT                                                  "+@0002
+    tknum,tarf_ic,tarif_costmod                             "+@0002
+    FROM zmmtt_liq_transp                                   "+@0002
+    FOR ALL ENTRIES IN @lit_liq                             "+@0002
+    WHERE bukrs = @lit_liq-bukrs AND                        "+@0002
+          tknum = @lit_liq-tknum AND                        "+@0002
+          tarf_ic > 0                                       "+@0002
+       OR bukrs = @lit_liq-bukrs AND                        "+@0002
+          tknum = @lit_liq-tknum AND                        "+@0002
+          tarif_costmod > 0                                 "+@0002
+    INTO TABLE @DATA(lt_liqt).                              "+@0002
+    IF lines( lt_liqt ) <> lines( lit_liq ).                "+@0002
+      "El numero de lineas no coincide.
+      "No se puede crear No.de Parte, no existe tarifa IC o tarifa Cost Model
+      MESSAGE TEXT-e01 TYPE 'I'.                            "+@0002
+      RETURN.                                               "+@0002
+    ENDIF.                                                  "+@0002
+  ENDIF.                                                    "+@0002
+
+  IF lit_liq[] IS NOT INITIAL.
+
+    lit_const[] = it_ztconst[].
+    SORT lit_const BY fieldname grpname.
+
+    READ TABLE lit_const ASSIGNING <lfs_const>
+                          WITH KEY  fieldname = 'PREFIJO'
+                                    grpname   = 'NRO PARTE'
+                                    BINARY SEARCH.
+
+    IF sy-subrc IS INITIAL.
+
+      lv_pref = <lfs_const>-line_low.
+
+    ENDIF.
+
+    CALL FUNCTION 'NUMBER_GET_NEXT'
+      EXPORTING
+        nr_range_nr             = lc_38
+        object                  = lc_rv_transpo
+        quantity                = lc_quantity
+      IMPORTING
+        number                  = lv_number
+      EXCEPTIONS
+        interval_not_found      = 1
+        number_range_not_intern = 2
+        object_not_found        = 3
+        quantity_is_0           = 4
+        quantity_is_not_1       = 5
+        interval_overflow       = 6
+        buffer_overflow         = 7
+        OTHERS                  = 8.
+    IF sy-subrc <> 0.
+      MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+              WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+
+    IF lv_number IS NOT INITIAL.
+
+      CONCATENATE lv_pref lv_number INTO lv_number SEPARATED BY '-'.
+
+      SORT lit_liq BY bukrs tknum shtyp tplst.
+
+      LOOP AT fp_rows ASSIGNING <lfs_row>.
+
+        READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                                  INDEX <lfs_row>-index.
+
+        IF sy-subrc IS INITIAL.
+
+          IF <lfs_liq_trans>-nro_parte IS INITIAL.
+
+            READ TABLE lit_liq TRANSPORTING NO FIELDS
+                                WITH KEY  bukrs = <lfs_liq_trans>-bukrs
+                                          tknum = <lfs_liq_trans>-tknum
+                                          shtyp = <lfs_liq_trans>-shtyp
+                                          tplst = <lfs_liq_trans>-tplst
+                                          BINARY SEARCH.
+            IF sy-subrc IS INITIAL.
+
+              <lfs_liq_trans>-nro_parte = lv_number.
+
+              lwa_liq = <lfs_liq_trans>.                    "++DZ0005
+              APPEND lwa_liq TO lit_liq1.                   "++DZ0005
+
+            ENDIF.
+
+          ENDIF.
+
+        ENDIF.
+
+      ENDLOOP.
+
+    ENDIF.
+
+  ENDIF.
+***  Begin of change by DZ0005 **********************
+  IF lit_liq1[] IS NOT INITIAL.
+
+    MODIFY zmmtt_liq_transp FROM TABLE lit_liq1.
+    COMMIT WORK.
+
+  ENDIF.
+***  End of change by DZ0005 **********************
+ENDFORM.                    " F_CREAR_PARTE
+*&---------------------------------------------------------------------*
+*&      Form  F_ANULAR_PARTE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_ROWS  text
+*      <--P_IT_LIQ_TRANSP  text
+*----------------------------------------------------------------------*
+FORM f_anular_parte USING     fp_rows       TYPE lvc_t_row
+                    CHANGING  fp_liq_transp TYPE ty_t_liqtrans.
+
+
+  FIELD-SYMBOLS: <lfs_row>       TYPE lvc_s_row,
+                 <lfs_liq_trans> TYPE zmmtt_liq_transp.
+
+  LOOP AT fp_rows ASSIGNING <lfs_row>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              INDEX <lfs_row>-index.
+
+    IF sy-subrc IS INITIAL.
+
+      IF <lfs_liq_trans>-nro_parte IS NOT INITIAL.
+
+        CLEAR <lfs_liq_trans>-nro_parte.
+
+      ENDIF.
+
+    ENDIF.
+
+  ENDLOOP.
+***  Begin of change by DZ0005 **********************
+  IF fp_liq_transp[] IS NOT INITIAL.
+
+    MODIFY zmmtt_liq_transp FROM TABLE fp_liq_transp.
+    COMMIT WORK.
+
+  ENDIF.
+***  End of change by DZ0005 **********************
+ENDFORM.                    " F_ANULAR_PARTE
+*&---------------------------------------------------------------------*
+*&      Form  F_CALC_CENTRO_BASE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_CH_LIQ_TRANSP  text
+*      -->P_IT_ZTCONST  text
+*      <--P_IT_CESP  text
+*      <--P_IT_R_SHTYPS  text
+*      <--P_IT_TRANSP_CBASE  text
+*----------------------------------------------------------------------*
+FORM f_calc_centro_base  USING    fp_liq_transp   TYPE  ty_t_liqtrans
+                                  fp_const        TYPE  ty_t_ztconst
+                         CHANGING fp_cesp         TYPE  ty_t_cesp
+                                  fp_r_shtyps     TYPE  ty_r_shtyps
+                                  fp_transp_cbase TYPE  ty_t_cbase.
+
+  TYPES: BEGIN OF lty_vttp,
+           tknum TYPE tknum,
+           tpnum TYPE tpnum,
+           vbeln TYPE vbeln,
+         END     OF  lty_vttp,
+
+         BEGIN   OF  lty_lips,
+           vbeln TYPE vbeln_vl,
+           posnr TYPE posnr_vl,
+           werks TYPE werks_d,
+         END     OF  lty_lips,
+
+         BEGIN         OF  lty_cesp1,
+           bukrs      TYPE bukrs,
+           centro     TYPE werks_d,
+           shtyp      TYPE shtyp,
+           tipo       TYPE zmmed_tipo_shtyp,
+           werks_esp  TYPE zmmed_werks,
+           werks_base TYPE zmmed_werks_base,
+           werks_reg  TYPE zmmed_werks_reg,
+           lgort      TYPE lgort_d,
+           kostl_ter  TYPE zmmed_kostl_ter_t1,
+           kostl_ic   TYPE zmmed_kostl_ic_t1,
+         END             OF  lty_cesp1.
+
+  DATA: lit_const        TYPE ty_t_ztconst,
+        lwa_r_shtyps     TYPE ty_w_shtyps,
+        lwa_transp_cbase TYPE ty_transp_cbase,
+
+        lit_vttp         TYPE STANDARD TABLE OF lty_vttp,
+        lit_lips         TYPE STANDARD TABLE OF lty_lips,
+        lit_liqt         TYPE ty_t_liqtrans,
+        lv_bukrs         TYPE bukrs,
+
+        lit_cesp1        TYPE STANDARD TABLE OF lty_cesp1.
+
+  FIELD-SYMBOLS: <lfs_const> TYPE ztconstantes,
+                 <lfs_liqt>  TYPE zmmtt_liq_transp,
+
+                 <lfs_vttp>  TYPE lty_vttp,
+                 <lfs_lips>  TYPE lty_lips.
+
+  lit_const[] = fp_const[].
+  DELETE lit_const WHERE grpname NE 'SHTYP_SPCL'.
+
+  LOOP AT lit_const ASSIGNING <lfs_const>.
+
+    lwa_r_shtyps-sign   = 'I'.
+    lwa_r_shtyps-option = 'EQ'.
+    lwa_r_shtyps-low    = <lfs_const>-line_low.
+    APPEND lwa_r_shtyps TO fp_r_shtyps.
+
+  ENDLOOP.
+
+***  Get the Deliveries
+  IF fp_liq_transp[] IS NOT INITIAL.
+
+    lit_liqt[]  = fp_liq_transp[].
+
+    IF fp_r_shtyps[] IS NOT INITIAL.
+      DELETE lit_liqt[] WHERE shtyp NOT IN fp_r_shtyps[].
+    ENDIF.
+
+    IF lit_liqt[] IS NOT INITIAL.
+
+      SELECT  tknum
+              tpnum
+              vbeln
+              FROM vttp
+              INTO TABLE lit_vttp
+              FOR ALL ENTRIES IN lit_liqt
+              WHERE tknum = lit_liqt-tknum.
+
+      IF sy-subrc IS INITIAL.
+
+        SORT lit_vttp BY tknum.
+
+        SELECT  vbeln
+                posnr
+                werks
+                FROM lips
+                INTO TABLE lit_lips
+                FOR ALL ENTRIES IN lit_vttp
+                WHERE vbeln = lit_vttp-vbeln.
+
+        IF sy-subrc IS INITIAL.
+
+          SORT lit_lips BY vbeln.
+
+          LOOP AT lit_liqt ASSIGNING <lfs_liqt>.
+
+            lwa_transp_cbase-tknum  = <lfs_liqt>-tknum.
+            lwa_transp_cbase-shtyp  = <lfs_liqt>-shtyp.
+            lwa_transp_cbase-tplst  = <lfs_liqt>-tplst.
+
+            READ TABLE lit_vttp ASSIGNING <lfs_vttp>
+                                WITH KEY  tknum = <lfs_liqt>-tknum
+                                BINARY SEARCH.
+            IF sy-subrc IS INITIAL.
+
+              READ TABLE lit_lips ASSIGNING <lfs_lips>
+                                WITH KEY  vbeln = <lfs_vttp>-vbeln
+                                BINARY SEARCH.
+              IF sy-subrc IS INITIAL.
+
+                lwa_transp_cbase-cbase  = <lfs_lips>-werks.
+                APPEND lwa_transp_cbase TO fp_transp_cbase.
+
+                CLEAR lwa_transp_cbase.
+
+              ENDIF.
+
+            ENDIF.
+
+          ENDLOOP.
+
+          IF fp_transp_cbase IS NOT INITIAL.
+
+            SORT fp_transp_cbase BY tknum shtyp tplst.
+
+            lv_bukrs = p_bukrs.
+
+            SELECT  bukrs
+                    centro
+                    shtyp
+                    tipo
+                    werks_esp
+                    werks_base
+                    werks_reg
+                    lgort
+                    kostl_ter
+                    kostl_ic
+                    FROM zmmtt_tran_cesp1
+                    INTO TABLE lit_cesp1
+                    FOR ALL ENTRIES IN fp_transp_cbase
+                    WHERE bukrs   = lv_bukrs
+                    AND   centro  = fp_transp_cbase-cbase
+                    AND   shtyp   = fp_transp_cbase-shtyp
+                    AND   tipo    = 'T1'.
+
+            IF sy-subrc IS INITIAL.
+
+              APPEND LINES OF lit_cesp1 TO fp_cesp.
+
+            ENDIF.
+
+          ENDIF.
+
+        ENDIF.
+
+      ENDIF.
+
+    ENDIF.
+
+    SORT fp_cesp BY bukrs tplst shtyp tipo.
+
+  ENDIF.
+
+ENDFORM.                    " F_CALC_CENTRO_BASE
+*&---------------------------------------------------------------------*
+*&      Form  F_GET_CBASE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_IT_R_SHTYPS  text
+*      -->P_IT_TRANSP_CBASE  text
+*      -->P_<LFS_LIQ_TRANS>_SHTYP  text
+*      <--P_LV_WERKS  text
+*----------------------------------------------------------------------*
+FORM f_get_cbase  USING     fp_r_shtyps     TYPE ty_r_shtyps
+                            fp_transp_cbase TYPE ty_t_cbase
+                            fp_tknum        TYPE tknum
+                            fp_shtyp        TYPE shtyp
+                            fp_tplst        TYPE tplst
+                  CHANGING  fp_werks        TYPE werks_d.
+
+  FIELD-SYMBOLS <lfs_cbase> TYPE  ty_transp_cbase.
+
+  IF fp_shtyp IN fp_r_shtyps[] AND fp_r_shtyps[] IS NOT INITIAL.
+
+    READ TABLE fp_transp_cbase ASSIGNING <lfs_cbase>
+                                WITH KEY  tknum = fp_tknum
+                                          shtyp = fp_shtyp
+                                          tplst = fp_tplst
+                                          BINARY SEARCH.
+
+    IF sy-subrc IS INITIAL.
+
+      fp_werks = <lfs_cbase>-cbase.
+
+    ENDIF.
+
+  ENDIF.
+
+ENDFORM.                    " F_GET_CBASE
+*&---------------------------------------------------------------------*
+*&      Form  F_CREATE_VERFACT_IC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_LIQ_TRANS  text
+*      <--P_FP_LIQ_TRANSP  text
+*      <--P_FP_RET  text
+*----------------------------------------------------------------------*
+FORM f_create_verfact_ic  USING  fp_liq_trans_sel  TYPE ty_t_liqtrans
+                       CHANGING fp_liq_transp     TYPE ty_t_liqtrans
+                                fp_ret            TYPE bapiret2_t.
+
+  TYPES: BEGIN OF lty_tdlnr_werks,
+           vbeln TYPE  vbeln_vf,
+           ebeln TYPE  ebeln,
+           bukrs TYPE  bukrs,
+           tknum TYPE  tknum,
+           shtyp TYPE  shtyp,
+           tplst TYPE  tplst,
+           daten TYPE  datend,
+         END           OF    lty_tdlnr_werks,
+
+         BEGIN   OF  lty_vbrk,
+           vbeln TYPE vbeln_vf,
+           netwr TYPE netwr,
+           xblnr TYPE xblnr_v1,                             "++DZ0008
+           mwsbk TYPE mwsbp,
+         END     OF  lty_vbrk.
+
+  DATA: lit_tdlnr_werks   TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lit_trans_ic      TYPE STANDARD TABLE OF lty_tdlnr_werks,
+        lwa_tdlnr_werks   TYPE lty_tdlnr_werks,
+        lit_liq_trans_sel TYPE ty_t_liqtrans,
+
+        lit_vbrk          TYPE STANDARD TABLE OF lty_vbrk,
+
+        lv_belnr          TYPE re_belnr,
+        lit_ret           TYPE bapiret2_t,
+        lwa_ret           TYPE bapiret2,
+        lwa_miro          TYPE zfi_st_backgrnd_miro,
+
+        lv_docfi          TYPE belnr_d,
+        lv_docbuk         TYPE bukrs,
+        lv_gjahr          TYPE gjahr,
+        lv_bktxt          TYPE bktxt,
+        lv_sgtxt          TYPE sgtxt,
+        lit_const         TYPE ty_t_ztconst.
+
+  FIELD-SYMBOLS: <lfs_liq_trans>   TYPE  zmmtt_liq_transp,
+                 <lfs_liq_trans1>  TYPE  zmmtt_liq_transp,
+                 <lfs_tdlnr_werks> TYPE  lty_tdlnr_werks,
+                 <lfs_trans_ic>    TYPE  lty_tdlnr_werks,
+                 <lfs_success>     TYPE  bapivbrksuccess,
+                 <lfs_vbrk>        TYPE  lty_vbrk,
+                 <lfs_const>       TYPE  ztconstantes.
+
+  DATA:	lit_liq TYPE ty_t_liqtrans,                         "++DZ0005
+        lwa_liq TYPE zmmtt_liq_transp.                      "++DZ0005
+
+  lit_liq_trans_sel[] = fp_liq_trans_sel[].
+
+  LOOP AT lit_liq_trans_sel ASSIGNING <lfs_liq_trans>.
+
+    READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans1>
+                WITH KEY  bukrs = <lfs_liq_trans>-bukrs
+                          tknum = <lfs_liq_trans>-tknum
+                          shtyp = <lfs_liq_trans>-shtyp
+                          tplst = <lfs_liq_trans>-tplst
+                          BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+
+      IF <lfs_liq_trans1>-factura_ic IS INITIAL OR
+        <lfs_liq_trans1>-belnr_ic  IS NOT INITIAL.
+
+        CONTINUE.
+
+      ENDIF.
+
+      lwa_tdlnr_werks-vbeln = <lfs_liq_trans1>-factura_ic.
+      lwa_tdlnr_werks-ebeln = <lfs_liq_trans1>-ebeln_ic.
+      lwa_tdlnr_werks-bukrs = <lfs_liq_trans>-bukrs.
+      lwa_tdlnr_werks-tknum = <lfs_liq_trans>-tknum.
+      lwa_tdlnr_werks-shtyp = <lfs_liq_trans>-shtyp.
+      lwa_tdlnr_werks-tplst = <lfs_liq_trans>-tplst.
+      lwa_tdlnr_werks-daten = <lfs_liq_trans>-daten.
+
+      APPEND lwa_tdlnr_werks TO lit_tdlnr_werks.
+
+    ENDIF.
+
+  ENDLOOP.
+
+  SORT lit_tdlnr_werks BY vbeln.
+
+  IF lit_tdlnr_werks IS NOT INITIAL.
+    SELECT  vbeln
+            netwr
+            xblnr                                           "++DZ0008
+            mwsbk
+            FROM vbrk
+            INTO TABLE lit_vbrk
+            FOR ALL ENTRIES IN lit_tdlnr_werks
+            WHERE vbeln = lit_tdlnr_werks-vbeln.
+    IF sy-subrc IS INITIAL.
+      SORT lit_vbrk BY vbeln.
+    ENDIF.
+  ENDIF.
+
+  lit_const[] = it_ztconst[].
+  SORT lit_const BY fieldname grpname.
+
+  READ TABLE lit_const ASSIGNING <lfs_const>
+                      WITH KEY  fieldname = 'TEXTOS'
+                                grpname   = 'VERIF_IC'
+                                BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    lv_bktxt = <lfs_const>-line_low.
+    lv_sgtxt = <lfs_const>-line_high.
+  ENDIF.
+
+  LOOP AT lit_tdlnr_werks ASSIGNING <lfs_tdlnr_werks>.
+
+    lwa_tdlnr_werks = <lfs_tdlnr_werks>.
+    APPEND lwa_tdlnr_werks TO lit_trans_ic.
+
+    AT END OF vbeln.
+
+      READ TABLE lit_vbrk ASSIGNING <lfs_vbrk>
+                          WITH KEY vbeln  = lwa_tdlnr_werks-vbeln
+                          BINARY SEARCH.
+      IF sy-subrc IS INITIAL.
+
+        lwa_miro-bldat = v_date_popup.
+        lwa_miro-budat = v_date_popup.
+        IF strlen( <lfs_vbrk>-xblnr ) GT 3.                 "++DZ0008
+          lwa_miro-xblnr = <lfs_vbrk>-xblnr+3.
+          " lwa_tdlnr_werks-vbeln. --DZ0008
+        ENDIF.                                              "++DZ0008
+        lwa_miro-zuonr = <lfs_vbrk>-xblnr.                  "++DZ0008
+        lwa_miro-xmwst = 'X'.
+        lwa_miro-wrbtr = <lfs_vbrk>-netwr + <lfs_vbrk>-mwsbk.
+        lwa_miro-bktxt = lv_bktxt.
+        lwa_miro-sgtxt = lv_sgtxt.
+        lwa_miro-billing_op_tax = <lfs_vbrk>-mwsbk.
+
+      ENDIF.
+
+      CALL FUNCTION 'ZFI_MIRO_BKG_POST_PE'
+        EXPORTING
+          im_ebeln        = lwa_tdlnr_werks-ebeln
+          im_wa_miro_data = lwa_miro
+        IMPORTING
+          ex_return       = lit_ret
+          ex_docfi        = lv_docfi
+          ex_docfi_bukrs  = lv_docbuk
+          ex_docfi_gjahr  = lv_gjahr
+        CHANGING
+          ch_belnr        = lv_belnr.
+
+      IF lv_belnr IS NOT INITIAL.
+
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          EXPORTING
+            wait = 'X'.
+
+        WAIT UP TO v_seg SECONDS.
+
+        CLEAR lwa_ret.
+        lwa_ret-type        = 'S'.
+        lwa_ret-id          = 'ZMM'.
+        lwa_ret-number      = '174'.
+        lwa_ret-message_v1  = lv_belnr.
+        APPEND lwa_ret TO lit_ret.
+
+        LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+          READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              WITH KEY  bukrs = <lfs_trans_ic>-bukrs
+                                        tknum = <lfs_trans_ic>-tknum
+                                        shtyp = <lfs_trans_ic>-shtyp
+                                        tplst = <lfs_trans_ic>-tplst
+                                          BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+
+            <lfs_liq_trans>-belnr_ic  = lv_belnr.
+            <lfs_liq_trans>-gjahr_ic  = lv_gjahr.
+            <lfs_liq_trans>-nombre_ic = sy-uname.
+            <lfs_liq_trans>-fecha_ic  = sy-datum.
+            <lfs_liq_trans>-hora_ic   = sy-uzeit.
+            <lfs_liq_trans>-stat_ic   = '2'.
+            <lfs_liq_trans>-icon      = '@08@'.
+
+            lwa_liq = <lfs_liq_trans>.                      "++DZ0005
+            APPEND lwa_liq TO lit_liq.                      "++DZ0005
+
+          ENDIF.
+
+        ENDLOOP.
+
+      ELSE.
+
+        LOOP AT lit_trans_ic ASSIGNING <lfs_trans_ic>.
+
+          READ TABLE fp_liq_transp ASSIGNING <lfs_liq_trans>
+                              WITH KEY  bukrs = <lfs_trans_ic>-bukrs
+                                        tknum = <lfs_trans_ic>-tknum
+                                        shtyp = <lfs_trans_ic>-shtyp
+                                        tplst = <lfs_trans_ic>-tplst
+                                          BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+
+            <lfs_liq_trans>-icon        = '@0A@'.
+
+            lwa_liq = <lfs_liq_trans>.                      "++DZ0005
+            APPEND lwa_liq TO lit_liq.                      "++DZ0005
+
+          ENDIF.
+
+        ENDLOOP.
+
+        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+      ENDIF.
+
+      APPEND LINES OF lit_ret TO fp_ret.
+
+      CLEAR:  lv_docfi,lv_docbuk,lv_gjahr,lv_belnr,lwa_miro,lwa_ret.
+      REFRESH:  lit_ret,lit_trans_ic.
+
+    ENDAT.
+
+  ENDLOOP.
+***  Begin of change by DZ0005 **********************
+  IF lit_liq[] IS NOT INITIAL.
+
+    MODIFY zmmtt_liq_transp FROM TABLE lit_liq.
+    COMMIT WORK.
+
+  ENDIF.
+***  End of change by DZ0005 **********************
+ENDFORM.                    " F_CREATE_VERFACT_IC
+*&---------------------------------------------------------------------*
+*&      Form  F_SAVE_PO_TEXT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LIT_EBELN  text
+*----------------------------------------------------------------------*
+FORM f_save_po_text  USING  fp_ebeln TYPE ty_t_ebeln_dt.
+
+  DATA: lwa_header TYPE  thead,
+        lwa_line1  TYPE  tline,
+        lit_line1  TYPE  STANDARD TABLE OF tline,
+        lit_ebeln  TYPE  ty_t_ebeln_dt.
+
+  FIELD-SYMBOLS <lfs_ebeln> TYPE ty_ebeln_dt.
+
+  lit_ebeln[] = fp_ebeln[].
+  SORT lit_ebeln BY ebeln.
+
+  LOOP AT lit_ebeln ASSIGNING <lfs_ebeln>.
+
+    lwa_header-tdobject = 'EKKO'.
+    lwa_header-tdname   = <lfs_ebeln>-ebeln.
+    lwa_header-tdid     = 'F56'.
+    lwa_header-tdspras  = sy-langu.
+
+    lwa_line1-tdformat   = '*'.
+    lwa_line1-tdline     = <lfs_ebeln>-tknum.
+    APPEND lwa_line1 TO lit_line1.
+
+    AT END OF ebeln.
+
+      CALL FUNCTION 'SAVE_TEXT'
+        EXPORTING
+          client          = sy-mandt
+          header          = lwa_header
+          savemode_direct = 'X'
+        TABLES
+          lines           = lit_line1
+        EXCEPTIONS
+          id              = 1
+          language        = 2
+          name            = 3
+          object          = 4
+          OTHERS          = 5.
+      IF sy-subrc <> 0.
+        MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+      ENDIF.
+
+      CLEAR lwa_header.
+      REFRESH lit_line1.
+
+    ENDAT.
+
+  ENDLOOP.
+
+ENDFORM.                    " F_SAVE_PO_TEXT
